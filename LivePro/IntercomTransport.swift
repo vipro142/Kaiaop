@@ -8,7 +8,7 @@ final class IntercomTransport {
     var onConnection: ((String) -> Void)?
     var onAudio: ((Data) -> Void)?
     var onTraffic: ((Int, Int) -> Void)?
-    private let host: NWEndpoint.Host = "116.118.45.184"
+    private var host: NWEndpoint.Host = "116.118.45.184"
     private let clientID: String
     private var tcp: NWConnection?
     private var udp: NWConnection?
@@ -31,6 +31,10 @@ final class IntercomTransport {
     private var queries: [UUID: NWConnection] = [:]
     init(clientID: String) { self.clientID = clientID }
 
+    func selectServer(_ server: IntercomServer) {
+        leave()
+        host = NWEndpoint.Host(server.host)
+    }
     func availability(_ profile: JoinProfile, completion: @escaping (Result<[String: Any], Error>) -> Void) {
         let key = UUID(), connection = NWConnection(host: host, port: 6000, using: .tcp)
         queries[key] = connection

@@ -61,6 +61,16 @@ struct LiveProView: View {
                     .lineLimit(1).minimumScaleFactor(0.7)
             }
             Spacer(minLength: 6)
+            Menu {
+                ForEach(IntercomServer.allCases) { server in
+                    Button(server.title + (model.selectedServer == server ? " ✓" : "")) { model.selectServer(server) }
+                }
+            } label: {
+                VStack(spacing: 2) {
+                    Text("Server").font(.caption.bold())
+                    Text(model.selectedServer.shortTitle).font(.system(size: 9))
+                }.padding(8).background(panel).cornerRadius(9)
+            }.disabled(model.joining).accessibilityLabel("Chọn server: " + model.selectedServer.title)
             if model.inRoom {
                 if model.profile.role == .camera && gps.choice > 0 {
                     Button { showGPS.toggle() } label: {

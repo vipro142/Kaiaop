@@ -5,6 +5,8 @@ import UIKit
 import MediaPlayer
 
 final class IntercomModel: ObservableObject {
+    @Published var selectedServer: IntercomServer = .hanoi
+    private var rejoinAfterServerSwitch = false
     @Published var profile: JoinProfile
     @Published var roomIDs = JoinProfile.rooms
     @Published var roomNames: [String: String] = [:]
@@ -67,6 +69,8 @@ final class IntercomModel: ObservableObject {
         let storedID = defaults.string(forKey: "clientID") ?? UUID().uuidString
         clientID = storedID; defaults.set(storedID, forKey: "clientID")
         transport = IntercomTransport(clientID: storedID)
+        selectedServer = IntercomServer(rawValue: defaults.string(forKey: "intercomServer") ?? "hanoi") ?? .hanoi
+        transport.selectServer(selectedServer)
         audio.echoCancellation = echoCancellation
         transport.onConnection = { [weak self] state in self?.connection(state) }
         transport.onMessage = { [weak self] message in self?.message(message) }
@@ -114,6 +118,20 @@ final class IntercomModel: ObservableObject {
         refreshAvailability()
     }
     deinit { remoteTargets.forEach { $0.0.removeTarget($0.1) }; availabilityTimer?.invalidate(); listeners.forEach { NotificationCenter.default.removeObserver($0) } }
+    func selectServer(_ server: IntercomServer) {
+        guard server != selectedServer else { return }
+        leave()
+        selectedServer = server
+        UserDefaults.standard.set(server.rawValue, forKey: "intercomServer")
+        transport.selectServer(server)
+        queryVersion += 1; queryBusy = false; canJoin = false
+        roomNames = [:]; roomIDs = JoinProfile.rooms; freeNumbers = []
+        passwordRequired = false; roomPassword = ""; roomClosed = false
+        closedWarningKey = ""; conflictKey = ""
+        rejoinAfterServerSwitch = false
+        connectionText = server.title
+        refreshAvailability()
+    }
     func selectionChanged() {
         roomClosed = false
         if passwordRoom != profile.room { roomPassword = ""; passwordRoom = profile.room }
@@ -124,8 +142,8 @@ final class IntercomModel: ObservableObject {
         guard !inRoom, !joining, !queryBusy, appActive else { return }
         queryBusy = true; let version = queryVersion
         transport.availability(profile) { [weak self] result in
-            guard let self = self else { return }; self.queryBusy = false
-            guard !self.inRoom, !self.joining, version == self.queryVersion else { return }
+            guard let self = self, version == self.queryVersion else { return }; self.queryBusy = false
+            guard !self.inRoom, !self.joining else { return }
             switch result {
             case .failure:
                 self.canJoin = false; self.availabilityText = "Chưa kết nối máy chủ. Đang thử lại…"
@@ -148,6 +166,11 @@ final class IntercomModel: ObservableObject {
                     ? "Còn \(self.freeNumbers.count)/\(self.roomLimit) số trống · Đã giữ số \(String(format: "%02d", selected))" : "Phòng đã đủ chỗ hoặc đang tắt."
                 let key = "\(self.profile.room):\(self.profile.cameraNumber)"
                 if conflict && self.conflictKey != key { self.conflictKey = key; self.showNotice("Trùng số camera. Vui lòng chọn lại.", seconds: 1.5) }
+                if self.rejoinAfterServerSwitch {
+                    self.rejoinAfterServerSwitch = false
+                    if self.canJoin && !self.roomClosed && !self.passwordRequired { self.join() }
+                    else { self.showNotice("Đã đổi sang " + self.selectedServer.title + ". Kiểm tra phòng và mật khẩu để tham gia.") }
+                }
             }
         }
     }
@@ -181,6 +204,7 @@ final class IntercomModel: ObservableObject {
     }
     private func save() { if let data = try? JSONEncoder().encode(profile) { UserDefaults.standard.set(data, forKey: "profile") } }
     func leave() {
+        rejoinAfterServerSwitch = false
         roomPassword = ""; joiningVersion += 1; joining = false; stopMic(); transport.leave(); audio.stop()
         connected = false; inRoom = false; remoteControls(false); members = []; talkers = []; tally = "off"; connectionText = "Chưa tham gia"
         UIApplication.shared.isIdleTimerDisabled = false; queryVersion += 1; refreshAvailability()

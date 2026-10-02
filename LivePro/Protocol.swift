@@ -35,7 +35,7 @@ struct JoinProfile: Codable, Equatable {
     }
     static let rooms = (65...74).map { "EVENT_" + String(UnicodeScalar($0)!) }
     func registration(clientID: String, password: String = "") -> [String: Any] {
-        ["type": "register", "roomPassword": password, "protocolVersion": 4, "appVersion": "3.4", "clientType": "ios", "clientId": clientID,
+        ["type": "register", "roomPassword": password, "protocolVersion": 4, "appVersion": "3.6.0", "clientType": "ios", "clientId": clientID,
          "deviceId": deviceID, "room": room, "role": role.rawValue,
          "number": number, "cameraNumber": role == .camera ? cameraNumber : 0,
          "name": name.trimmingCharacters(in: .whitespacesAndNewlines)]
@@ -91,4 +91,13 @@ struct PCMFrames {
 // Backgrounding releases a held PTT, but leaves an explicitly latched mic active.
 enum BackgroundMicPolicy {
     static func shouldRelease(active: Bool, latched: Bool) -> Bool { !active && !latched }
+}
+
+// Public endpoints only. SSH credentials never belong in client builds.
+enum IntercomServer: String, CaseIterable, Identifiable {
+    case hanoi, hochiminh
+    var id: String { rawValue }
+    var title: String { self == .hanoi ? "Server Hà Nội" : "Server Hồ Chí Minh" }
+    var shortTitle: String { self == .hanoi ? "Hà Nội" : "Hồ Chí Minh" }
+    var host: String { self == .hanoi ? "116.118.45.184" : "kailive1.ddns.net" }
 }
