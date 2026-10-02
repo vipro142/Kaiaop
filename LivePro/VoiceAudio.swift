@@ -47,6 +47,26 @@ final class VoiceAudio {
                 guard let self = self else { return }
                 self.lock.lock(); let enabled = self.transmitting, token = self.epoch; self.lock.unlock()
                 guard enabled else { return }
+                // Meter the input directly, independent of resampling/network packet production.
+                let meterNow = ProcessInfo.processInfo.systemUptime
+                if meterNow - lastMeterTime >= 0.05, buffer.frameLength > 0 {
+                    lastMeterTime = meterNow
+                    let count = Int(buffer.frameLength)
+                    let stride = buffer.format.isInterleaved ? Int(buffer.format.channelCount) : 1
+                    var energy = 0.0
+                    if let samples = buffer.floatChannelData?[0] {
+                        for i in 0..<count { let v = Double(samples[i * stride]); energy += v * v }
+                    } else if let samples = buffer.int16ChannelData?[0] {
+                        for i in 0..<count { let v = Double(samples[i * stride]) / 32768; energy += v * v }
+                    }
+                    let rms = sqrt(energy / Double(count))
+                    let level = max(0, min(1, (20 * log10(max(rms, 0.000001)) + 72) / 60))
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self = self else { return }
+                        self.lock.lock(); let current = self.transmitting && self.epoch == token; self.lock.unlock()
+                        if current { self.onLevel?(level) }
+                    }
+                }
                 if converterEpoch != token { converter.reset(); converterEpoch = token }
                 let capacity = AVAudioFrameCount(ceil(Double(buffer.frameLength) * 16000 / inputFormat.sampleRate) + 32)
                 guard let output = AVAudioPCMBuffer(pcmFormat: self.pcmFormat, frameCapacity: capacity) else { return }
@@ -56,19 +76,6 @@ final class VoiceAudio {
                     supplied = true; state.pointee = .haveData; return buffer
                 }
                 guard status != .error, error == nil, let samples = output.int16ChannelData?[0], output.frameLength > 0 else { return }
-                let meterNow = ProcessInfo.processInfo.systemUptime
-                if meterNow - lastMeterTime >= 0.05 {
-                    lastMeterTime = meterNow
-                    var sum = 0.0
-                    for i in 0..<Int(output.frameLength) { let value = Double(samples[i]) / 32768.0; sum += value * value }
-                    let rms = sqrt(sum / Double(output.frameLength))
-                    let level = max(0, min(1, (20 * log10(max(rms, 0.000001)) + 60) / 60))
-                    DispatchQueue.main.async { [weak self] in
-                        guard let self = self else { return }
-                        self.lock.lock(); let current = self.transmitting && self.epoch == token; self.lock.unlock()
-                        if current { self.onLevel?(level) }
-                    }
-                }
                 let bytes = Data(bytes: samples, count: Int(output.frameLength) * 2)
                 self.lock.lock()
                 guard self.transmitting, self.epoch == token else { self.lock.unlock(); return }

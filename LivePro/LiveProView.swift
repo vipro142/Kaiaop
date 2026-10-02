@@ -239,7 +239,10 @@ struct LiveProView: View {
     }
     private var micWaveform: some View {
         HStack(spacing: 8) {
-            Image(systemName: model.micLive ? "mic.fill" : "mic.slash.fill").font(.caption)
+            VStack(spacing: 2) {
+                Image(systemName: model.micLive ? "mic.fill" : "mic.slash.fill")
+                Text(model.micLive ? "MIC" : "TẮT").font(.system(size: 8))
+            }.font(.caption)
             GeometryReader { geometry in
                 HStack(spacing: 2) {
                     ForEach(0..<36, id: \.self) { index in
@@ -247,7 +250,7 @@ struct LiveProView: View {
                         Capsule().fill(value > 0.9 ? Color.orange : accent)
                             .frame(width: max(1, (geometry.size.width - 70) / 36), height: max(2, CGFloat(value) * 28))
                     }
-                }.frame(height: 30).animation(.linear(duration: 0.05), value: model.micLevels)
+                }.frame(height: 30)
             }.frame(height: 30)
         }.foregroundColor(muted).accessibilityElement(children: .ignore)
             .accessibilityLabel(model.micLive ? "Mức âm thanh micro đang phát" : "Micro đang tắt")

@@ -66,7 +66,7 @@ final class IntercomModel: ObservableObject {
         audio.onLevel = { [weak self] level in
             guard let self = self else { return }
             if !self.micLive { self.micLevels = Array(repeating: 0, count: 36); return }
-            self.micLevels.removeFirst(); self.micLevels.append(level)
+            self.micLevels = Array(self.micLevels.dropFirst()) + [level]
         }
         audio.onPCM = { [weak self] data in self?.transport.audio(data) }
         let center = NotificationCenter.default
