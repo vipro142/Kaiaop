@@ -17,10 +17,12 @@ import UIKit
 
 // GPS stays independent of the voice engine; no audio-session changes here.
 final class GPSTracker: NSObject, ObservableObject, CLLocationManagerDelegate {
-    static let labels = ["Tắt GPS", "42km Nam", "42km Nữ", "21km Nam", "21km Nữ", "10km Nam", "10km Nữ", "5km Nam", "5km Nữ"]
+    static let labels = ["None — Tắt GPS", "42km Nam", "42km Nữ", "21km Nam", "21km Nữ", "10km Nam", "10km Nữ", "5km Nam", "5km Nữ"]
     static let ids = ["", "42424242", "24242424", "21212121", "12121212", "10101010", "01010101", "05050505", "50505050"]
     @Published var choice = UserDefaults.standard.integer(forKey: "gpsChoice")
     @Published var status = "GPS đang tắt"
+    @Published var fixStatus = "Chưa có vị trí"
+    @Published var lastSent = "Chưa gửi thành công"
     private let manager = CLLocationManager()
     private var timer: Timer?
     private var latest: CLLocation?
@@ -45,7 +47,7 @@ final class GPSTracker: NSObject, ObservableObject, CLLocationManagerDelegate {
         self.camera = camera
         UserDefaults.standard.set(choice, forKey: "gpsChoice")
         generation += 1; task?.cancel(); task = nil
-        latest = nil; sentFix = .distantPast
+        latest = nil; sentFix = .distantPast; lastSent = "Chưa gửi thành công"; fixStatus = "Chưa có vị trí"
         reconcile()
     }
     private func reconcile() {
@@ -67,11 +69,12 @@ final class GPSTracker: NSObject, ObservableObject, CLLocationManagerDelegate {
     func requestBackgroundPermission() { manager.requestAlwaysAuthorization() }
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) { reconcile() }
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        guard running && camera && choice > 0 else { return }
         for fix in locations where fix.horizontalAccuracy >= 0 && CLLocationCoordinate2DIsValid(fix.coordinate) {
             guard abs(fix.timestamp.timeIntervalSinceNow) <= 10 else { continue }
             if let old = latest, fix.timestamp <= old.timestamp { continue }
             latest = fix
-            status = "GPS ±\(Int(fix.horizontalAccuracy)) m • chu kỳ gửi 1 giây"
+            fixStatus = "GPS ±\(Int(fix.horizontalAccuracy)) m • chu kỳ gửi 1 giây"
         }
         sendLatest()
     }
@@ -80,16 +83,17 @@ final class GPSTracker: NSObject, ObservableObject, CLLocationManagerDelegate {
     }
     private func sendLatest() {
         guard Date().timeIntervalSince(lastAttempt) >= 1 else { return }
-        guard running, task == nil, let fix = latest, fix.timestamp > sentFix,
+        guard running, camera, task == nil, let fix = latest, fix.timestamp > sentFix,
               abs(fix.timestamp.timeIntervalSinceNow) <= 10, choice > 0 else { return }
         var url = URLComponents(string: "http://kailive1.ddns.net:5055/")!
         let fields: [(String, String)] = [
-            ("id", Self.ids[choice]), ("timestamp", String(fix.timestamp.timeIntervalSince1970)),
+            ("id", Self.ids[choice]), ("timestamp", String(Int64(fix.timestamp.timeIntervalSince1970 * 1000))),
             ("lat", String(fix.coordinate.latitude)), ("lon", String(fix.coordinate.longitude)),
             ("accuracy", String(fix.horizontalAccuracy)), ("altitude", String(fix.altitude)),
             ("speed", String(max(0, fix.speed) * 1.94384449)), ("bearing", String(max(0, fix.course))), ("valid", "true")]
         url.queryItems = fields.map { URLQueryItem(name: $0.0, value: $0.1) }
         guard let endpoint = url.url else { return }
+        status = "Đang gửi tới Traccar…"
         lastAttempt = Date()
         let token = generation
         var request = URLRequest(url: endpoint); request.timeoutInterval = 8
@@ -99,8 +103,13 @@ final class GPSTracker: NSObject, ObservableObject, CLLocationManagerDelegate {
                 self.task = nil
                 if error == nil, let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) {
                     self.sentFix = fix.timestamp
-                    self.status = "Traccar đã nhận • \(DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .medium))"
-                } else { self.status = "Chưa gửi được • sẽ thử lại vị trí mới nhất" }
+                    self.lastSent = DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .medium)
+                    self.status = "Traccar đã nhận"
+                } else if let error = error as NSError? {
+                    self.status = "Lỗi mạng \(error.code): \(error.localizedDescription)"
+                } else if let http = response as? HTTPURLResponse {
+                    self.status = "Traccar HTTP \(http.statusCode) • kiểm tra Device ID/cổng 5055"
+                } else { self.status = "Không nhận được phản hồi Traccar" }
             }
         }
         task?.resume()

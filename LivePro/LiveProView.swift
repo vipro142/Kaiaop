@@ -97,14 +97,16 @@ struct LiveProView: View {
                             .opacity(model.profile.role == .camera ? 1 : 0.35)
                             .onChange(of: model.profile.cameraNumber) { _ in model.selectionChanged() }
                     }
+                    if model.profile.role == .camera {
                     selection("GPS CAMERA") {
                         Picker("Thiết bị GPS", selection: $gps.choice) {
                             ForEach(0..<GPSTracker.labels.count, id: \.self) { Text(GPSTracker.labels[$0]).tag($0) }
                         }.disabled(model.profile.role != .camera)
                     }
-                    Text(gps.status).font(.caption).foregroundColor(muted)
+                    if gps.choice > 0 { gpsStatusPanel }
                     if gps.choice > 0 && model.profile.role == .camera {
                         Button("Cho phép GPS luôn hoạt động") { gps.requestBackgroundPermission() }.font(.caption)
+                    }
                     }
                     if model.passwordRequired {
                         SecureField("Mật khẩu sự kiện", text: $model.roomPassword).padding(13).background(ink).cornerRadius(10)
@@ -173,8 +175,17 @@ struct LiveProView: View {
             .foregroundColor(model.profile.role == .camera ? .yellow : .white)
         + Text(" - Thiết bị " + String(format: "%02d", model.profile.number))
     }
+    private var gpsStatusPanel: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text("GPS · " + GPSTracker.labels[gps.choice]).font(.caption.bold())
+            Text(gps.fixStatus).font(.caption2)
+            Text(gps.status).font(.caption2)
+            Text("Gửi thành công: " + gps.lastSent).font(.caption2)
+        }.frame(maxWidth: .infinity, alignment: .leading).padding(10).background(panel).cornerRadius(10)
+    }
     private var controls: some View {
         VStack(spacing: 12) {
+            if model.profile.role == .camera && gps.choice > 0 { gpsStatusPanel }
             if model.profile.role == .director {
                 Toggle("PTT · Nhấn giữ để nói", isOn: $model.directorPTT)
                     .font(.subheadline).onChange(of: model.directorPTT) { _ in model.modeChanged() }
