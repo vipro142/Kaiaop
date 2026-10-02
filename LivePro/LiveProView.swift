@@ -202,7 +202,7 @@ struct LiveProView: View {
         }.frame(maxWidth: .infinity, alignment: .leading).padding(10).background(panel).cornerRadius(10)
     }
     private var controls: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 8) {
             if model.profile.role == .director {
                 Toggle("PTT · Nhấn giữ để nói", isOn: $model.directorPTT)
                     .font(.subheadline).onChange(of: model.directorPTT) { _ in model.modeChanged() }
@@ -216,7 +216,15 @@ struct LiveProView: View {
                            onDown: { model.startMic() }, onUp: { model.stopMic() })
                     .frame(height: 76).accessibilityIdentifier("holdMic")
             }
-            HStack(spacing: 10) {
+            HStack(spacing: 7) {
+                micWaveform
+                Button { model.toggleEchoCancellation() } label: {
+                    Text("EC").font(.caption.bold()).frame(width: 34, height: 32)
+                        .foregroundColor(model.echoActive ? accent : muted)
+                        .background(model.echoCancellation ? accent.opacity(0.15) : ink).cornerRadius(8)
+                }.disabled(model.micHeld)
+                    .accessibilityLabel("Bật hoặc tắt khử vọng micro")
+                    .accessibilityValue(model.echoStatus)
                 Menu {
                     Button("Loa ngoài" + (model.speaker ? " ✓" : "")) { model.speaker = true; model.changeSpeaker() }
                     Button("Loa thoại" + (!model.speaker ? " ✓" : "")) { model.speaker = false; model.changeSpeaker() }
@@ -224,22 +232,29 @@ struct LiveProView: View {
                     Button("Loa OFF" + (model.speakerMuted ? " ✓" : "")) { model.muteSpeaker(true) }
                 } label: {
                     Image(systemName: model.speakerMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
-                        .frame(width: 44, height: 36).background(ink).cornerRadius(10)
+                        .frame(width: 34, height: 32).background(ink).cornerRadius(8)
                 }.accessibilityLabel("Tùy chọn loa")
-                Spacer()
-                AudioRoutePicker().frame(width: 38, height: 32).accessibilityLabel("Chọn tai nghe hoặc thiết bị âm thanh")
+                AudioRoutePicker().frame(width: 30, height: 32).accessibilityLabel("Chọn tai nghe hoặc thiết bị âm thanh")
             }
-            micWaveform
+            Text(model.echoStatus).font(.system(size: 10)).foregroundColor(muted)
+                .frame(maxWidth: .infinity, alignment: .leading)
             if model.audioFailed {
                 Button("Thử lại micro / loa") { model.retryAudio() }.font(.caption)
             }
-            Text(model.micDiagnostic).font(.system(size: 10, design: .monospaced)).foregroundColor(muted).fixedSize(horizontal: false, vertical: true)
-            HStack { Image(systemName: "speaker.fill"); Slider(value: $model.volume).onChange(of: model.volume) { _ in model.setVolume() }; Image(systemName: "speaker.wave.2.fill") }
-                .font(.caption).foregroundColor(muted)
-            Text(model.traffic).font(.system(size: 11, design: .monospaced)).foregroundColor(muted).lineLimit(1).minimumScaleFactor(0.6)
+            if model.audioFailed {
+                Text(model.micDiagnostic).font(.caption2).foregroundColor(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            DisclosureGroup("Chi tiết âm thanh") {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(model.micDiagnostic).fixedSize(horizontal: false, vertical: true)
+                    Text(model.traffic)
+                }.font(.system(size: 10, design: .monospaced)).foregroundColor(muted)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }.font(.caption2).foregroundColor(muted)
             Button("Rời kênh / Đổi thiết bị") { model.leave() }.font(.subheadline).padding(.vertical, 5)
             Text("Ưu tiên tai nghe khi các máy ở gần nhau để tránh vọng âm.").font(.system(size: 10)).foregroundColor(muted).multilineTextAlignment(.center)
-        }.padding(16).background(panel.opacity(0.95)).cornerRadius(18)
+        }.padding(12).background(panel.opacity(0.95)).cornerRadius(18)
     }
     private var micWaveform: some View {
         HStack(spacing: 8) {
@@ -249,13 +264,13 @@ struct LiveProView: View {
             }.font(.caption)
             GeometryReader { geometry in
                 HStack(spacing: 2) {
-                    ForEach(0..<36, id: \.self) { index in
-                        let value = model.micLive ? model.micLevels[index] : 0
+                    ForEach(0..<18, id: \.self) { index in
+                        let value = model.micLive ? model.micLevels[index * 2] : 0
                         Capsule().fill(value > 0.9 ? Color.orange : accent)
-                            .frame(width: max(1, (geometry.size.width - 70) / 36), height: max(2, CGFloat(value) * 28))
+                            .frame(width: max(1, (geometry.size.width - 34) / 18), height: max(2, CGFloat(value) * 20))
                     }
-                }.frame(height: 30)
-            }.frame(height: 30)
+                }.frame(height: 22)
+            }.frame(height: 22)
         }.foregroundColor(muted).accessibilityElement(children: .ignore)
             .accessibilityLabel(model.micLive ? "Mức âm thanh micro đang phát" : "Micro đang tắt")
     }

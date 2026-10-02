@@ -17,7 +17,7 @@ import UIKit
 
 // GPS stays independent of the voice engine; no audio-session changes here.
 final class GPSTracker: NSObject, ObservableObject, CLLocationManagerDelegate {
-    static let labels = ["None — Tắt GPS", "42km Nam", "42km Nữ", "21km Nam", "21km Nữ", "10km Nam", "10km Nữ", "5km Nam", "5km Nữ"]
+    static let labels = ["None", "42km Nam", "42km Nữ", "21km Nam", "21km Nữ", "10km Nam", "10km Nữ", "5km Nam", "5km Nữ"]
     static let ids = ["", "42424242", "24242424", "21212121", "12121212", "10101010", "01010101", "05050505", "50505050"]
     @Published var choice = UserDefaults.standard.integer(forKey: "gpsChoice")
     @Published var status = "GPS đang tắt"

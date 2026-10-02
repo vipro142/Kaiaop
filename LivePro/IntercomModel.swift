@@ -28,6 +28,9 @@ final class IntercomModel: ObservableObject {
     @Published var tally = "off"
     @Published var directorPTT = false
     @Published var micHeld = false
+    @Published var echoCancellation = true
+    @Published var echoActive = false
+    @Published var echoStatus = "EC đang kiểm tra"
     @Published var audioFailed = false
     @Published var micDiagnostic = "Micro đang tắt"
     @Published var micLive = false
@@ -56,11 +59,13 @@ final class IntercomModel: ObservableObject {
 
     init() {
         let defaults = UserDefaults.standard
+        echoCancellation = (defaults.object(forKey: "echoCancellation") as? Bool) ?? true
         if let data = defaults.data(forKey: "profile"), let p = try? JSONDecoder().decode(JoinProfile.self, from: data) { profile = p }
         else { profile = JoinProfile() }
         let storedID = defaults.string(forKey: "clientID") ?? UUID().uuidString
         clientID = storedID; defaults.set(storedID, forKey: "clientID")
         transport = IntercomTransport(clientID: storedID)
+        audio.echoCancellation = echoCancellation
         transport.onConnection = { [weak self] state in self?.connection(state) }
         transport.onMessage = { [weak self] message in self?.message(message) }
         transport.onAudio = { [weak self] data in self?.audio.play(data) }
@@ -71,6 +76,9 @@ final class IntercomModel: ObservableObject {
             self.audioFailed = true
             self.micDiagnostic = "Audio STOP · " + reason
             self.showNotice(reason, seconds: 20)
+        }
+        audio.onEchoStatus = { [weak self] status, enabled in
+            self?.echoStatus = status; self?.echoActive = enabled
         }
         audio.onDiagnostic = { [weak self] text in self?.micDiagnostic = text }
         transport.onSendError = { [weak self] text in self?.showNotice(text) }
@@ -252,6 +260,12 @@ final class IntercomModel: ObservableObject {
     func setVolume() { audio.volume = speakerMuted ? 0 : Float(volume) }
     func muteSpeaker(_ muted: Bool) { speakerMuted = muted; setVolume() }
     func changeSpeaker() { stopMic(); audio.speaker = speaker; if inRoom { audio.stop(deactivate: false); restartAudio() } }
+    func toggleEchoCancellation() {
+        echoCancellation.toggle()
+        UserDefaults.standard.set(echoCancellation, forKey: "echoCancellation")
+        audio.echoCancellation = echoCancellation
+        if inRoom { retryAudio() }
+    }
     func retryAudio() {
         guard inRoom else { return }
         stopMic(); audio.stop(deactivate: false); restartAudio()

@@ -7,6 +7,9 @@ import AudioToolbox
 final class VoiceAudio {
     var onNeedsRecovery: ((String) -> Void)?
     var onDiagnostic: ((String) -> Void)?
+    var onEchoStatus: ((String, Bool) -> Void)?
+    var echoCancellation = true
+    private var echoPreferenceError: String?
     var onLevel: ((Double) -> Void)?
     var onPCM: ((Data) -> Void)?
     private let lock = NSLock()
@@ -67,7 +70,15 @@ final class VoiceAudio {
             if speaker { options.insert(.defaultToSpeaker) }
             try session.setCategory(.playAndRecord, mode: .default, options: options)
             try? session.setPreferredIOBufferDuration(0.02)
+            echoPreferenceError = nil
+            if #available(iOS 18.2, *) {
+                if session.isEchoCancelledInputAvailable {
+                    do { try session.setPrefersEchoCancelledInput(echoCancellation) }
+                    catch { echoPreferenceError = error.localizedDescription }
+                }
+            }
             try session.setActive(true)
+            updateEchoStatus()
             // Use the system route, including a wired/Bluetooth microphone when selected.
             // No hardware sample-rate/channel assumptions: queues convert the PCM stream.
             let context = Unmanaged.passUnretained(self).toOpaque()
@@ -199,6 +210,7 @@ final class VoiceAudio {
         inputBuffers = 0; outputFrames = 0; outputTicks = 0; playedFrames = 0
         lock.unlock()
         let session = AVAudioSession.sharedInstance()
+        updateEchoStatus()
         let input = session.currentRoute.inputs.map { $0.portName }.joined(separator: ", ")
         let output = session.currentRoute.outputs.map { $0.portName }.joined(separator: ", ")
         let version = (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "unknown"
@@ -209,6 +221,16 @@ final class VoiceAudio {
         else if emptyInputSeconds >= 5 || emptyOutputSeconds >= 5 {
             reportFailure("Audio Queue không có callback trong 5s: micro=\(captured)/s, loa=\(ticks)/s; input=[\(input)], output=[\(output)]")
         }
+    }
+    private func updateEchoStatus() {
+        guard echoCancellation else { onEchoStatus?("EC tắt", false); return }
+        if #available(iOS 18.2, *) {
+            let session = AVAudioSession.sharedInstance()
+            if session.isEchoCancelledInputEnabled { onEchoStatus?("EC bật · Khử vọng loa", true) }
+            else if echoPreferenceError != nil { onEchoStatus?("EC chưa bật được · Âm thanh thường", false) }
+            else if !session.isEchoCancelledInputAvailable { onEchoStatus?("EC không hỗ trợ trên thiết bị này", false) }
+            else { onEchoStatus?("EC chưa áp dụng cho đường âm thanh này", false) }
+        } else { onEchoStatus?("EC cần iOS 18.2 và iPhone hỗ trợ", false) }
     }
     private func reportFailure(_ reason: String) {
         guard !failureReported else { return }
