@@ -18,6 +18,7 @@ workflows:
             exit 1
           fi
           cd "$project_dir"
+          python3 -c "from pathlib import Path; p=Path('build-unsigned.command'); p.write_bytes(p.read_bytes().replace(bytes([13,10]),bytes([10])))"
           bash build-unsigned.command 2>&1 | tee build-ios.log
     artifacts:
       - "**/build/LIVEPRO-Intercom-unsigned.ipa"
