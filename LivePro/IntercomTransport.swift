@@ -3,6 +3,7 @@ import Network
 
 // All state and callbacks run on the main queue. Microphone frames cross onto it explicitly.
 final class IntercomTransport {
+    var onSendError: ((String) -> Void)?
     var onMessage: (([String: Any]) -> Void)?
     var onConnection: ((String) -> Void)?
     var onAudio: ((Data) -> Void)?
@@ -162,8 +163,13 @@ final class IntercomTransport {
     }
     func audio(_ data: Data) {
         guard ready, granted, held, data.count == 640 else { return }
-        var packet = Data("AUDIO|\(id)|".utf8); packet.append(data); tx += packet.count
-        udp?.send(content: packet, completion: .contentProcessed({ _ in }))
+        var packet = Data("AUDIO|\(id)|".utf8); packet.append(data)
+        let token = generation
+        udp?.send(content: packet, completion: .contentProcessed({ [weak self] error in
+            guard let self = self, self.generation == token else { return }
+            if let error = error { self.onSendError?("Lỗi gửi âm thanh: \(error.localizedDescription)"); self.disconnect(token) }
+            else { self.tx += packet.count }
+        }))
     }
     private func command(_ type: String) { Self.send(["type": type], through: tcp) }
     private static func send(_ message: [String: Any], through connection: NWConnection?) {

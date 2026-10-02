@@ -2,6 +2,10 @@ import Foundation
 import AVFoundation
 
 final class VoiceAudio {
+    var onDiagnostic: ((String) -> Void)?
+    private var captureWatchdog: Timer?
+    private var inputBuffers = 0
+    private var outputFrames = 0
     var onLevel: ((Double) -> Void)?
     var onPCM: ((Data) -> Void)?
     private var engine: AVAudioEngine?
@@ -40,6 +44,12 @@ final class VoiceAudio {
                 throw NSError(domain: "LIVEPRO.Audio", code: 1, userInfo: [NSLocalizedDescriptionKey: "Không có microphone khả dụng"])
             }
             engine.attach(player); engine.connect(player, to: engine.mainMixerNode, format: playFormat)
+            // Keep the input branch actively rendered, but never monitor the local mic to the speaker.
+            let captureMixer = AVAudioMixerNode()
+            engine.attach(captureMixer)
+            engine.connect(engine.inputNode, to: captureMixer, format: inputFormat)
+            engine.connect(captureMixer, to: engine.mainMixerNode, format: inputFormat)
+            captureMixer.outputVolume = 0
             player.volume = volume
             var converterEpoch = -1
             var lastMeterTime = 0.0
@@ -47,6 +57,7 @@ final class VoiceAudio {
                 guard let self = self else { return }
                 self.lock.lock(); let enabled = self.transmitting, token = self.epoch; self.lock.unlock()
                 guard enabled else { return }
+                self.lock.lock(); self.inputBuffers += 1; self.lock.unlock()
                 // Meter the input directly, independent of resampling/network packet production.
                 let meterNow = ProcessInfo.processInfo.systemUptime
                 if meterNow - lastMeterTime >= 0.05, buffer.frameLength > 0 {
@@ -79,7 +90,7 @@ final class VoiceAudio {
                 let bytes = Data(bytes: samples, count: Int(output.frameLength) * 2)
                 self.lock.lock()
                 guard self.transmitting, self.epoch == token else { self.lock.unlock(); return }
-                let frames = self.packets.append(bytes); self.lock.unlock()
+                let frames = self.packets.append(bytes); self.outputFrames += frames.count; self.lock.unlock()
                 for frame in frames {
                     DispatchQueue.main.async { [weak self] in
                         guard let self = self else { return }
@@ -90,10 +101,18 @@ final class VoiceAudio {
             }
             tapInstalled = true
             engine.prepare(); try engine.start(); player.play()
+            captureWatchdog = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+                guard let self = self else { return }
+                self.lock.lock(); let enabled = self.transmitting, buffers = self.inputBuffers, frames = self.outputFrames
+                self.inputBuffers = 0; self.outputFrames = 0; self.lock.unlock()
+                guard enabled else { return }
+                let source = AVAudioSession.sharedInstance().currentRoute.inputs.first?.portName ?? "Không có đầu vào"
+                self.onDiagnostic?("\(source) · Thu \(buffers)/s · PCM \(frames)/s")
+            }
         } catch { stop(); throw error }
     }
     func setTransmitting(_ enabled: Bool) {
-        lock.lock(); epoch += 1; transmitting = enabled; packets.clear(); lock.unlock()
+        lock.lock(); guard transmitting != enabled else { lock.unlock(); return }; epoch += 1; transmitting = enabled; packets.clear(); inputBuffers = 0; outputFrames = 0; lock.unlock()
         if !enabled { onLevel?(0) }
     }
     func play(_ pcm: Data) {
@@ -119,6 +138,7 @@ final class VoiceAudio {
         if running { player?.play() }
     }
     func stop(deactivate: Bool = true) {
+        captureWatchdog?.invalidate(); captureWatchdog = nil
         setTransmitting(false); playbackEpoch += 1; queuedBuffers = 0
         if let engine = engine { if tapInstalled { engine.inputNode.removeTap(onBus: 0) }; engine.stop() }
         tapInstalled = false

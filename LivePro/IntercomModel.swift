@@ -28,6 +28,7 @@ final class IntercomModel: ObservableObject {
     @Published var tally = "off"
     @Published var directorPTT = false
     @Published var micHeld = false
+    @Published var micDiagnostic = "Micro đang tắt"
     @Published var micLive = false
     @Published var micLevels: [Double] = Array(repeating: 0, count: 36)
     @Published var speaker = true
@@ -63,6 +64,8 @@ final class IntercomModel: ObservableObject {
         transport.onMessage = { [weak self] message in self?.message(message) }
         transport.onAudio = { [weak self] data in self?.audio.play(data) }
         transport.onTraffic = { [weak self] tx, rx in self?.traffic = String(format: "↑ Gửi %.1f KB   ·   ↓ Nhận %.1f KB", Double(tx)/1024, Double(rx)/1024) }
+        audio.onDiagnostic = { [weak self] text in self?.micDiagnostic = text }
+        transport.onSendError = { [weak self] text in self?.showNotice(text) }
         audio.onLevel = { [weak self] level in
             guard let self = self else { return }
             if !self.micLive { self.micLevels = Array(repeating: 0, count: 36); return }
@@ -185,7 +188,7 @@ final class IntercomModel: ObservableObject {
         case "ptt_start": if let person = Member(json) { talkers.removeAll { $0.id == person.id }; talkers.append(person) }
         case "ptt_stop": talkers.removeAll { $0.id == json["deviceId"] as? String }
         case "ptt_granted":
-            if micHeld && connected { micLive = true; audio.setTransmitting(true) } else { transport.microphone(false) }
+            if micHeld && connected { micLive = true; micDiagnostic = "Đang kiểm tra đầu vào micro…"; audio.setTransmitting(true) } else { transport.microphone(false) }
         case "ptt_busy", "ptt_revoked": stopMic(); showNotice("Máy chủ chưa mở micro. Hãy thử lại.")
         case "tally": tally = (json["state"] as? String) ?? "off"
         case "error":
