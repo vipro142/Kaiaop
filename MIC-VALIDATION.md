@@ -1,3 +1,12 @@
+# 3.5.10 (46)
+
+Director role labels are red in local identity, active speakers and Devices. Camera/Admin label colors retained.
+EC menu retains independent echo toggle and adds a microphone-mode system panel shortcut. Voice Isolation cannot be enabled programmatically: preferred/active states are read-only. Actual mode is polled through existing diagnostic updates; selected-but-inactive is not displayed as enabled. This does not guarantee Voice Isolation availability on the current Audio Queue route. The menu is disabled during PTT. No capture/playback backend changes.
+
+Validation: Swift grammar/plists/archive only on Windows. Not Xcode compiled or iPhone tested. Verify three Director labels, EC menu actions, iOS panel availability, active state, and unchanged bidirectional audio on device.
+
+Previous version notes:
+
 # 3.5.9 (45) — optional native echo cancellation and compact controls
 
 User confirmed capture and playback work in Audio Queue 3.5.8. Preserve this backend.

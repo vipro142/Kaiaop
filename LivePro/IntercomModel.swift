@@ -30,6 +30,8 @@ final class IntercomModel: ObservableObject {
     @Published var micHeld = false
     @Published var echoCancellation = true
     @Published var echoActive = false
+    @Published var voiceIsolationActive = false
+    @Published var voiceIsolationStatus = "Tách giọng chưa bật"
     @Published var echoStatus = "EC đang kiểm tra"
     @Published var audioFailed = false
     @Published var micDiagnostic = "Micro đang tắt"
@@ -78,7 +80,7 @@ final class IntercomModel: ObservableObject {
             self.showNotice(reason, seconds: 20)
         }
         audio.onEchoStatus = { [weak self] status, enabled in
-            self?.echoStatus = status; self?.echoActive = enabled
+            self?.echoStatus = status; self?.echoActive = enabled; self?.refreshMicrophoneMode()
         }
         audio.onDiagnostic = { [weak self] text in self?.micDiagnostic = text }
         transport.onSendError = { [weak self] text in self?.showNotice(text) }
@@ -260,6 +262,18 @@ final class IntercomModel: ObservableObject {
     func setVolume() { audio.volume = speakerMuted ? 0 : Float(volume) }
     func muteSpeaker(_ muted: Bool) { speakerMuted = muted; setVolume() }
     func changeSpeaker() { stopMic(); audio.speaker = speaker; if inRoom { audio.stop(deactivate: false); restartAudio() } }
+    private func refreshMicrophoneMode() {
+        voiceIsolationActive = AVCaptureDevice.activeMicrophoneMode == .voiceIsolation
+        if voiceIsolationActive { voiceIsolationStatus = "Tách giọng bật" }
+        else if AVCaptureDevice.preferredMicrophoneMode == .voiceIsolation {
+            voiceIsolationStatus = "Tách giọng đã chọn, chưa áp dụng"
+        } else { voiceIsolationStatus = "Tách giọng chưa bật" }
+    }
+    func openMicrophoneModes() {
+        guard inRoom, audio.running, !micHeld else { return }
+        refreshMicrophoneMode()
+        AVCaptureDevice.showSystemUserInterface(.microphoneModes)
+    }
     func toggleEchoCancellation() {
         echoCancellation.toggle()
         UserDefaults.standard.set(echoCancellation, forKey: "echoCancellation")

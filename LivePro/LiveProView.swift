@@ -179,7 +179,7 @@ struct LiveProView: View {
                         .frame(width: 38, height: 38).background(accent).clipShape(Circle())
                     VStack(alignment: .leading, spacing: 5) {
                         if !member.name.isEmpty { Text(member.name).font(.headline) }
-                        Text(member.roleTitle).font(.caption.bold()).foregroundColor((member.role == .camera || member.role == .admin) ? .yellow : muted)
+                        Text(member.roleTitle).font(.caption.bold()).foregroundColor(member.role == .director ? .red : (member.role == .camera || member.role == .admin) ? .yellow : muted)
                     }
                     Spacer(); Image(systemName: "waveform").foregroundColor(accent)
                 }.padding(14).background(Color(red: 0.07, green: 0.20, blue: 0.29)).cornerRadius(13)
@@ -190,7 +190,7 @@ struct LiveProView: View {
     private var identity: Text {
         Text(model.roomTitle(model.profile.room) + " - " + model.profile.name + " - ")
         + Text(model.profile.role == .camera ? "Camera " + String(format: "%02d", model.profile.cameraNumber) : model.profile.role.title)
-            .foregroundColor(model.profile.role == .camera ? .yellow : .white)
+            .foregroundColor(model.profile.role == .director ? .red : model.profile.role == .camera ? .yellow : .white)
         + Text(" - Thiết bị " + String(format: "%02d", model.profile.number))
     }
     private var gpsStatusPanel: some View {
@@ -218,12 +218,16 @@ struct LiveProView: View {
             }
             HStack(spacing: 7) {
                 micWaveform
-                Button { model.toggleEchoCancellation() } label: {
+                Menu {
+                    Button(model.echoCancellation ? "Tắt khử vọng" : "Bật khử vọng") { model.toggleEchoCancellation() }
+                    Button("Tách giọng nói…") { model.openMicrophoneModes() }
+                    Text(model.voiceIsolationStatus)
+                } label: {
                     Text("EC").font(.caption.bold()).frame(width: 34, height: 32)
-                        .foregroundColor(model.echoActive ? accent : muted)
+                        .foregroundColor((model.echoActive || model.voiceIsolationActive) ? accent : muted)
                         .background(model.echoCancellation ? accent.opacity(0.15) : ink).cornerRadius(8)
                 }.disabled(model.micHeld)
-                    .accessibilityLabel("Bật hoặc tắt khử vọng micro")
+                    .accessibilityLabel("Khử vọng và tách giọng nói")
                     .accessibilityValue(model.echoStatus)
                 Menu {
                     Button("Loa ngoài" + (model.speaker ? " ✓" : "")) { model.speaker = true; model.changeSpeaker() }
@@ -236,7 +240,7 @@ struct LiveProView: View {
                 }.accessibilityLabel("Tùy chọn loa")
                 AudioRoutePicker().frame(width: 30, height: 32).accessibilityLabel("Chọn tai nghe hoặc thiết bị âm thanh")
             }
-            Text(model.echoStatus).font(.system(size: 10)).foregroundColor(muted)
+            Text(model.echoStatus + " · " + model.voiceIsolationStatus).font(.system(size: 10)).foregroundColor(muted)
                 .frame(maxWidth: .infinity, alignment: .leading)
             if model.audioFailed {
                 Button("Thử lại micro / loa") { model.retryAudio() }.font(.caption)
@@ -290,7 +294,7 @@ struct LiveProView: View {
                 HStack {
                     VStack(alignment: .leading, spacing: 6) {
                         if !member.name.isEmpty { Text((model.talkers.contains(where: { $0.id == member.id }) ? "● " : "○ ") + member.name).font(.headline) }
-                        Text(member.roleTitle).foregroundColor((member.role == .camera || member.role == .admin) ? .yellow : muted).font(.subheadline)
+                        Text(member.roleTitle).foregroundColor(member.role == .director ? .red : (member.role == .camera || member.role == .admin) ? .yellow : muted).font(.subheadline)
                     }
                     Spacer(); Text("Thiết bị " + String(format: "%02d", member.number)).font(.caption)
                 }.padding(.vertical, 5)
