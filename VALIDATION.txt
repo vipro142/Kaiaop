@@ -1,0 +1,1 @@
+Swift syntax parser PASS; plist GPS/audio permissions PASS. Xcode build/type-check and device tests NOT RUN. See README-GPS-3.5.md.
