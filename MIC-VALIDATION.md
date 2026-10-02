@@ -1,15 +1,29 @@
-# 3.5.7 (43): iPhone audio initialization audit
+# 3.5.8 (44) — Native iOS Audio Queue backend
 
-Native Swift AVFoundation: AVAudioSession, AVAudioEngine, AVAudioPlayerNode, AVAudioConverter. Build uses iphoneos SDK. PCM 16kHz mono Int16/640-byte frames is the intercom wire format, not Android hardware code.
+The user reports repeated zero capture callbacks, silent playback, and exhausted engine recovery on iPhone 17 Pro Max / reported iOS 27. The physical-device root cause of the prior AVAudioEngine path remains unconfirmed.
 
-Confirmed code defects corrected:
-- Initial voice-processing startup errors previously bypassed the fallback. Now cleanly dispose/deactivate and attempt a new default-mode engine without voice processing, once. Both failure details survive if neither works.
-- Generic no-microphone error previously conflated invalid capture format and converter creation failure. Permission, input hardware/tap format, output hardware format and conversion initialization now have distinct errors.
-- Session preferences are requested while inactive and are nonfatal hints. The converter uses actual tap format. An empty input route can select an available built-in mic; existing headset routes are preserved.
-- Startup error notice lasts 20 seconds.
+This version replaces that path with AudioToolbox input/output queues and AVAudioSession playAndRecord/default. It does not contain Android audio APIs. The deployment target remains iOS 15.0. Device-family compatibility is an implementation target, not a claim of testing all iPhones.
 
-Existing bounded runtime recovery, transport protocol and GPS preserved. Default-mode fallback does not provide voice-processing echo cancellation.
+Implementation:
+- Independent input and output queues, each with three 640-byte PCM buffers: 16kHz mono signed packed little-endian Int16, 20ms/frame.
+- Output queues remain primed with silence between received packets. At most six additional received frames are pending; oldest dropped to bound latency.
+- Input buffers are always recycled, including while PTT is off. Only granted PTT sends frames; generation checks discard stale callbacks after mute/stop/restart.
+- Main-thread lifecycle, guarded callback data, queue identities checked, locks released before synchronous queue disposal. No disposal from callback threads.
+- Existing OS interruption/route-change handling remains. Watchdog no longer automatically tears down and reopens audio repeatedly. Actual step/status stays on screen, with a manual retry action.
+- UI shows v3.5.8 / Audio Queue plus input/output names, capture callbacks, generated PCM, output callbacks (including silence), and recycled buffers that contained received audio. None of these alone proves audible speech.
+- Default mode has no voice-processing echo cancellation. Use headphones or separate devices when testing. Do not label this path as echo-cancelled.
+- Existing GPS and transport source are unchanged.
 
-Validation on Windows: Swift grammar, plist parsing, build target and archive integrity. NOT Xcode typechecked, compiled or physically tested. Do not claim that audible audio is fixed until two real devices have passed bidirectional testing.
+Validation performed here on Windows: Swift grammar parsing, plist parsing, Xcode target/source inspection, archive integrity and GPS/transport byte comparison with the 3.5.7 source archive. These checks do not typecheck Apple SDK calls or run Core Audio. No Xcode build or physical-device audio test has run here.
 
-Physical acceptance: install 3.5.7, grant mic permission, join same room on two devices, test both directions with speaker on. Verify Thu > 0 while listening, PCM > 0 only when PTT granted, playback completions on receiver and audible speech. Repeat GPS on/off and headset/interruption recovery. Record full startup error if any; compare built-in mic with Bluetooth disconnected. No voice transmission may auto-resume during recovery.
+Required acceptance on Codemagic/iPhone:
+1. Build and install; confirm v3.5.8 / Audio Queue appears, rather than an older binary.
+2. With built-in mic/speaker and microphone permission, join room and wait 5s. Both capture and speaker callbacks should advance even while PTT is off; PCM should not be sent while off.
+3. Two devices in same room: speak for 5s each way; verify audible speech, waveform, generated PCM, sender TX and receiver RX. Then GPS on/off; confirm tracking remains functional.
+4. Verify mute speaker, volume, wired/Bluetooth routes, device removal, interruption and foreground/background transitions. Recovery must never resume transmission without a new user action.
+5. Rapid PTT/leave/rejoin: no stale voice transmission, crash or unlimited buffering. On failure, full error step and OSStatus must remain visible without restart loops. Use manual retry.
+6. Test multiple iPhone/iOS versions before claiming broad compatibility.
+
+References:
+https://developer.apple.com/library/archive/documentation/MusicAudio/Conceptual/AudioQueueProgrammingGuide/AQRecord/RecordingAudio.html
+https://developer.apple.com/library/archive/documentation/MusicAudio/Conceptual/AudioQueueProgrammingGuide/AQPlayback/PlayingAudio.html
