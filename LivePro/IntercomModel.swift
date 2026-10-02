@@ -172,7 +172,11 @@ final class IntercomModel: ObservableObject {
                     self.audioRecoveryTimes = []; self.audio.speaker = self.speaker; try self.audio.start()
                     self.inRoom = true; self.remoteControls(true); self.directorPTT = false; self.tally = "off"; self.traffic = "↑ Gửi 0 KB   ·   ↓ Nhận 0 KB"
                     self.save(); self.transport.join(self.profile, password: self.passwordRequired ? self.roomPassword : ""); UIApplication.shared.isIdleTimerDisabled = true
-                } catch { self.audio.stop(); self.showNotice("Không mở được âm thanh: \(error.localizedDescription)") }
+                } catch {
+                    self.audio.stop()
+                    self.micDiagnostic = error.localizedDescription
+                    self.showNotice("Không mở được âm thanh: \(error.localizedDescription)", seconds: 20)
+                }
             }
         }
     }

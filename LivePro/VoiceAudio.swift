@@ -32,23 +32,60 @@ final class VoiceAudio {
 
     func start() throws {
         if running { return }
-        stop(deactivate: false)
+        do { try startAttempt() }
+        catch {
+            let firstError = error.localizedDescription
+            stop()
+            guard !compatibilityMode else { throw error }
+            compatibilityMode = true
+            do { try startAttempt() }
+            catch {
+                stop()
+                throw audioError(10, "Voice: " + firstError + "\nDự phòng: " + error.localizedDescription)
+            }
+        }
+    }
+
+    private func audioError(_ code: Int, _ message: String) -> NSError {
+        NSError(domain: "LIVEPRO.Audio", code: code, userInfo: [NSLocalizedDescriptionKey: message])
+    }
+
+    private func startAttempt() throws {
+        stop(deactivate: true)
         let session = AVAudioSession.sharedInstance()
         var options: AVAudioSession.CategoryOptions = [.allowBluetooth]
         if speaker { options.insert(.defaultToSpeaker) }
         try session.setCategory(.playAndRecord, mode: compatibilityMode ? .default : .voiceChat, options: options)
-        try session.setPreferredSampleRate(48000)
-        try session.setPreferredIOBufferDuration(0.02)
+        // Preferences are hints; conversion uses the actual hardware format below.
+        try? session.setPreferredSampleRate(48000)
+        try? session.setPreferredIOBufferDuration(0.02)
         try session.setActive(true)
+        guard session.recordPermission == .granted else {
+            throw audioError(2, "iOS chưa cấp quyền Microphone cho LIVEPRO. Mở Cài đặt → Quyền riêng tư → Microphone.")
+        }
+        // Preserve the selected headset. Select built-in input only if iOS has no input route.
+        if session.currentRoute.inputs.isEmpty,
+           let builtIn = session.availableInputs?.first(where: { $0.portType == .builtInMic }) {
+            try session.setPreferredInput(builtIn)
+        }
         let engine = AVAudioEngine(), player = AVAudioPlayerNode()
         self.engine = engine; self.player = player
         do {
             // Voice processing uses the output path as the echo reference.
             if !compatibilityMode { try engine.inputNode.setVoiceProcessingEnabled(true) }
+            let hardwareInput = engine.inputNode.inputFormat(forBus: 0)
             let inputFormat = engine.inputNode.outputFormat(forBus: 0)
-            guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0,
-                  let converter = AVAudioConverter(from: inputFormat, to: pcmFormat) else {
-                throw NSError(domain: "LIVEPRO.Audio", code: 1, userInfo: [NSLocalizedDescriptionKey: "Không có microphone khả dụng"])
+            let hardwareOutput = engine.outputNode.outputFormat(forBus: 0)
+            let route = session.currentRoute.inputs.map { $0.portName }.joined(separator: ", ")
+            guard hardwareInput.sampleRate > 0, hardwareInput.channelCount > 0,
+                  inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
+                throw audioError(3, "iOS chưa mở đầu vào: route=[\(route)], HW=\(hardwareInput.sampleRate)Hz/\(hardwareInput.channelCount)ch, tap=\(inputFormat.sampleRate)Hz/\(inputFormat.channelCount)ch")
+            }
+            guard hardwareOutput.sampleRate > 0, hardwareOutput.channelCount > 0 else {
+                throw audioError(4, "iOS chưa mở đầu ra loa: \(hardwareOutput.sampleRate)Hz/\(hardwareOutput.channelCount)ch")
+            }
+            guard let converter = AVAudioConverter(from: inputFormat, to: pcmFormat) else {
+                throw audioError(5, "Không tạo được bộ chuyển đổi PCM: \(inputFormat.sampleRate)Hz/\(inputFormat.channelCount)ch → 16000Hz mono Int16")
             }
             engine.attach(player); engine.connect(player, to: engine.mainMixerNode, format: playFormat)
             player.volume = volume
