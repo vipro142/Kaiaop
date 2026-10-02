@@ -2,6 +2,13 @@ import Foundation
 import AVFoundation
 
 final class VoiceAudio {
+    var onNeedsRecovery: ((String) -> Void)?
+    private var configurationObserver: NSObjectProtocol?
+    private var recoveryIssued = false
+    private var silentIntervals = 0
+    private var compatibilityMode = false
+    private var playedFrames = 0
+    private var stalledPlaybackIntervals = 0
     var onDiagnostic: ((String) -> Void)?
     private var captureWatchdog: Timer?
     private var inputBuffers = 0
@@ -29,7 +36,7 @@ final class VoiceAudio {
         let session = AVAudioSession.sharedInstance()
         var options: AVAudioSession.CategoryOptions = [.allowBluetooth]
         if speaker { options.insert(.defaultToSpeaker) }
-        try session.setCategory(.playAndRecord, mode: .voiceChat, options: options)
+        try session.setCategory(.playAndRecord, mode: compatibilityMode ? .default : .voiceChat, options: options)
         try session.setPreferredSampleRate(48000)
         try session.setPreferredIOBufferDuration(0.02)
         try session.setActive(true)
@@ -37,27 +44,21 @@ final class VoiceAudio {
         self.engine = engine; self.player = player
         do {
             // Voice processing uses the output path as the echo reference.
-            try engine.inputNode.setVoiceProcessingEnabled(true)
+            if !compatibilityMode { try engine.inputNode.setVoiceProcessingEnabled(true) }
             let inputFormat = engine.inputNode.outputFormat(forBus: 0)
             guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0,
                   let converter = AVAudioConverter(from: inputFormat, to: pcmFormat) else {
                 throw NSError(domain: "LIVEPRO.Audio", code: 1, userInfo: [NSLocalizedDescriptionKey: "Không có microphone khả dụng"])
             }
             engine.attach(player); engine.connect(player, to: engine.mainMixerNode, format: playFormat)
-            // Keep the input branch actively rendered, but never monitor the local mic to the speaker.
-            let captureMixer = AVAudioMixerNode()
-            engine.attach(captureMixer)
-            engine.connect(engine.inputNode, to: captureMixer, format: inputFormat)
-            engine.connect(captureMixer, to: engine.mainMixerNode, format: inputFormat)
-            captureMixer.outputVolume = 0
             player.volume = volume
             var converterEpoch = -1
             var lastMeterTime = 0.0
             engine.inputNode.installTap(onBus: 0, bufferSize: 960, format: inputFormat) { [weak self] buffer, _ in
                 guard let self = self else { return }
                 self.lock.lock(); let enabled = self.transmitting, token = self.epoch; self.lock.unlock()
-                guard enabled else { return }
                 self.lock.lock(); self.inputBuffers += 1; self.lock.unlock()
+                guard enabled else { return }
                 // Meter the input directly, independent of resampling/network packet production.
                 let meterNow = ProcessInfo.processInfo.systemUptime
                 if meterNow - lastMeterTime >= 0.05, buffer.frameLength > 0 {
@@ -100,16 +101,38 @@ final class VoiceAudio {
                 }
             }
             tapInstalled = true
+            recoveryIssued = false; silentIntervals = 0; playedFrames = 0; stalledPlaybackIntervals = 0
+            configurationObserver = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil) { [weak self, weak engine] _ in
+                // Never tear down an engine inside its configuration notification callback.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self, weak engine] in
+                    guard let self = self, let changed = engine, self.engine === changed else { return }
+                    self.requestRecovery("Cấu hình micro/loa đã thay đổi", fallback: false)
+                }
+            }
             engine.prepare(); try engine.start(); player.play()
             captureWatchdog = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
                 guard let self = self else { return }
                 self.lock.lock(); let enabled = self.transmitting, buffers = self.inputBuffers, frames = self.outputFrames
                 self.inputBuffers = 0; self.outputFrames = 0; self.lock.unlock()
-                guard enabled else { return }
                 let source = AVAudioSession.sharedInstance().currentRoute.inputs.first?.portName ?? "Không có đầu vào"
-                self.onDiagnostic?("\(source) · Thu \(buffers)/s · PCM \(frames)/s")
+                let destination = AVAudioSession.sharedInstance().currentRoute.outputs.first?.portName ?? "Không có loa"
+                let played = self.playedFrames; self.playedFrames = 0
+                let state = self.running ? "RUN" : "STOP"
+                let mode = self.compatibilityMode ? "Dự phòng" : "Voice"
+                self.onDiagnostic?("\(state) · \(mode) · \(source) → \(destination)\nThu \(buffers)/s · PCM \(frames)/s · Phát \(played)/s")
+                self.silentIntervals = buffers == 0 ? self.silentIntervals + 1 : 0
+                self.stalledPlaybackIntervals = self.queuedBuffers >= 6 && played == 0 ? self.stalledPlaybackIntervals + 1 : 0
+                if !self.running || self.silentIntervals >= 3 || self.stalledPlaybackIntervals >= 3 {
+                    self.requestRecovery(enabled ? "Micro không trả dữ liệu" : "Đường âm thanh chưa hoạt động", fallback: true)
+                }
             }
         } catch { stop(); throw error }
+    }
+    private func requestRecovery(_ reason: String, fallback: Bool) {
+        guard !recoveryIssued else { return }
+        recoveryIssued = true
+        if fallback { compatibilityMode = true }
+        onNeedsRecovery?(reason)
     }
     func setTransmitting(_ enabled: Bool) {
         lock.lock(); guard transmitting != enabled else { lock.unlock(); return }; epoch += 1; transmitting = enabled; packets.clear(); inputBuffers = 0; outputFrames = 0; lock.unlock()
@@ -129,7 +152,7 @@ final class VoiceAudio {
         player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
             DispatchQueue.main.async {
                 guard let self = self, token == self.playbackEpoch else { return }
-                self.queuedBuffers = max(0, self.queuedBuffers - 1)
+                self.queuedBuffers = max(0, self.queuedBuffers - 1); self.playedFrames += 1
             }
         }
     }
@@ -138,6 +161,7 @@ final class VoiceAudio {
         if running { player?.play() }
     }
     func stop(deactivate: Bool = true) {
+        if let observer = configurationObserver { NotificationCenter.default.removeObserver(observer); configurationObserver = nil }
         captureWatchdog?.invalidate(); captureWatchdog = nil
         setTransmitting(false); playbackEpoch += 1; queuedBuffers = 0
         if let engine = engine { if tapInstalled { engine.inputNode.removeTap(onBus: 0) }; engine.stop() }

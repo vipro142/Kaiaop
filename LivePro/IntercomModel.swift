@@ -49,6 +49,7 @@ final class IntercomModel: ObservableObject {
     private var joiningVersion = 0
     private var listeners: [NSObjectProtocol] = []
     private var remoteTargets: [(MPRemoteCommand, Any)] = []
+    private var audioRecoveryTimes: [Date] = []
     private var appActive = true
     var toggleMode: Bool { profile.role == .director && !directorPTT }
     var sortedMembers: [Member] { members.sorted { $0.number < $1.number } }
@@ -64,6 +65,25 @@ final class IntercomModel: ObservableObject {
         transport.onMessage = { [weak self] message in self?.message(message) }
         transport.onAudio = { [weak self] data in self?.audio.play(data) }
         transport.onTraffic = { [weak self] tx, rx in self?.traffic = String(format: "↑ Gửi %.1f KB   ·   ↓ Nhận %.1f KB", Double(tx)/1024, Double(rx)/1024) }
+        audio.onNeedsRecovery = { [weak self] reason in
+            guard let self = self, self.inRoom else { return }
+            let now = Date()
+            self.audioRecoveryTimes = self.audioRecoveryTimes.filter { now.timeIntervalSince($0) < 30 }
+            self.stopMic(); self.audio.stop(deactivate: false)
+            guard self.audioRecoveryTimes.count < 3 else {
+                self.micDiagnostic = "Audio STOP · Khôi phục thất bại"
+                self.showNotice("Không khởi động được micro/loa. Hãy rời phòng và tham gia lại.", seconds: 8)
+                return
+            }
+            self.audioRecoveryTimes.append(now)
+            do {
+                try self.audio.start()
+                self.showNotice(reason + ". Đã thử khởi động lại âm thanh; bấm mic để nói lại.", seconds: 5)
+            } catch {
+                self.micDiagnostic = "Audio STOP · " + error.localizedDescription
+                self.showNotice("Không khôi phục được âm thanh: " + error.localizedDescription, seconds: 8)
+            }
+        }
         audio.onDiagnostic = { [weak self] text in self?.micDiagnostic = text }
         transport.onSendError = { [weak self] text in self?.showNotice(text) }
         audio.onLevel = { [weak self] level in
@@ -149,7 +169,7 @@ final class IntercomModel: ObservableObject {
                 guard self.appActive else { self.showNotice("Mở ứng dụng để bắt đầu phiên liên lạc."); return }
                 guard allowed else { self.showNotice("Cần quyền Microphone. Mở Cài đặt → LIVEPRO Intercom → Microphone."); return }
                 do {
-                    self.audio.speaker = self.speaker; try self.audio.start()
+                    self.audioRecoveryTimes = []; self.audio.speaker = self.speaker; try self.audio.start()
                     self.inRoom = true; self.remoteControls(true); self.directorPTT = false; self.tally = "off"; self.traffic = "↑ Gửi 0 KB   ·   ↓ Nhận 0 KB"
                     self.save(); self.transport.join(self.profile, password: self.passwordRequired ? self.roomPassword : ""); UIApplication.shared.isIdleTimerDisabled = true
                 } catch { self.audio.stop(); self.showNotice("Không mở được âm thanh: \(error.localizedDescription)") }

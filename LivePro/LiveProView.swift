@@ -230,7 +230,7 @@ struct LiveProView: View {
                 AudioRoutePicker().frame(width: 38, height: 32).accessibilityLabel("Chọn tai nghe hoặc thiết bị âm thanh")
             }
             micWaveform
-            if model.micLive { Text(model.micDiagnostic).font(.system(size: 10, design: .monospaced)).foregroundColor(muted) }
+            Text(model.micDiagnostic).font(.system(size: 10, design: .monospaced)).foregroundColor(muted).fixedSize(horizontal: false, vertical: true)
             HStack { Image(systemName: "speaker.fill"); Slider(value: $model.volume).onChange(of: model.volume) { _ in model.setVolume() }; Image(systemName: "speaker.wave.2.fill") }
                 .font(.caption).foregroundColor(muted)
             Text(model.traffic).font(.system(size: 11, design: .monospaced)).foregroundColor(muted).lineLimit(1).minimumScaleFactor(0.6)

@@ -1,11 +1,15 @@
-# 3.5.5 (41) — microphone capture investigation
+# 3.5.6 (42) audio recovery
 
-Changes: explicit muted capture branch in AVAudioEngine; idempotent transmission state; per-second input-buffer and PCM-packet diagnostics; UDP completion error reporting and successful local-send byte accounting. Existing GPS behavior preserved.
+User reports no microphone callbacks and no speaker output despite received network data. Root cause on device remains unconfirmed.
 
-The capture graph change is a candidate fix, not a confirmed root cause: Apple documents that an input tap alone can capture audio. No physical iPhone is attached here.
+Changes:
+- Rebuild audio graph after AVAudioEngineConfigurationChange, asynchronously after notification return, rejecting obsolete engine notifications.
+- Remove experimental muted capture mixer from 3.5.5; input tap captures directly.
+- Watch input callbacks regardless of PTT. After three empty intervals or stalled playback queue, rebuild with default session mode and without voice processing.
+- Compatibility mode has no voice-processing echo cancellation; test with headphones/separated devices.
+- Stop PTT before recovery; require user to press again, no automatic transmission. Limit recovery to three attempts in thirty seconds.
+- Display RUN/STOP, input/output routes, capture/PCM/playback callback counts while listening and speaking. Playback callbacks and UDP send completion do not guarantee audible output or server receipt.
 
-Validation here: Swift grammar parse and plist parsing only. Xcode compile and physical-device audio remain required.
+Validation: Swift grammar, plist and ZIP integrity checked on Windows; no Xcode typecheck/build or physical iPhone verification available.
 
-Build with Codemagic. Install the new IPA on an iPhone; join the same room as a second device with speaker enabled. Hold PTT and speak for at least 5 seconds. Verify sound on the other device, then reverse direction. Check built-in microphone and a headset, GPS on/off, interruption recovery, and speaker mute. No local microphone sound should echo through the capture branch.
-
-During PTT, Thu counts input callbacks/sec, PCM counts generated 20ms audio packets/sec (normally around 50). These counters measure callbacks, not audible speech. A moving waveform indicates nonzero input. The transmit byte counter indicates local UDP send completion, not server receipt. If silent, capture screenshots from sender and receiver, including waveform, Thu/PCM and send/receive counters.
+Device acceptance: build/install 3.5.6; use two devices in same room. Wait five seconds after joining; verify RUN and input callbacks. Speak each direction and verify PCM, sender TX, receiver RX and playback completions. Repeat with GPS enabled, speaker mute/unmute, wired/Bluetooth headset changes, phone interruption and background/foreground. Recovery must release PTT and must not loop endlessly. If still silent, capture diagnostics on both devices.
