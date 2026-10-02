@@ -10,6 +10,7 @@ private let muted = Color(red: 0.57, green: 0.66, blue: 0.77)
 struct LiveProView: View {
     @ObservedObject var model: IntercomModel
     @State private var showDevices = false
+    @State private var showGPS = false
     @StateObject private var gps = GPSTracker()
     @Environment(\.horizontalSizeClass) private var sizeClass
     private var background: Color {
@@ -21,7 +22,17 @@ struct LiveProView: View {
             background.ignoresSafeArea()
             VStack(spacing: 0) {
                 header.padding(.horizontal, 22).padding(.vertical, 16)
-                if model.inRoom { room } else { setup }
+                if model.inRoom {
+                    room.overlay(alignment: .topTrailing) {
+                        if showGPS && model.profile.role == .camera && gps.choice > 0 {
+                            gpsStatusPanel.frame(maxWidth: 320)
+                                .overlay(RoundedRectangle(cornerRadius: 10).stroke(accent.opacity(0.5), lineWidth: 1))
+                                .shadow(color: .black.opacity(0.4), radius: 10, y: 4)
+                                .padding(.horizontal, 16).padding(.top, 4)
+                                .accessibilityIdentifier("gpsPopup")
+                        }
+                    }
+                } else { setup }
             }
             if let notice = model.notice {
                 Text(notice).font(.subheadline).multilineTextAlignment(.center)
@@ -34,10 +45,10 @@ struct LiveProView: View {
             }
         }
         .sheet(isPresented: $showDevices) { devicesSheet }
-        .onChange(of: model.inRoom) { joined in if !joined { showDevices = false } }
+        .onChange(of: model.inRoom) { joined in if !joined { showDevices = false; showGPS = false } }
         .onAppear { gps.configure(camera: model.profile.role == .camera) }
-        .onChange(of: gps.choice) { _ in gps.configure(camera: model.profile.role == .camera) }
-        .onChange(of: model.profile.role) { _ in gps.configure(camera: model.profile.role == .camera) }
+        .onChange(of: gps.choice) { _ in showGPS = false; gps.configure(camera: model.profile.role == .camera) }
+        .onChange(of: model.profile.role) { _ in showGPS = false; gps.configure(camera: model.profile.role == .camera) }
         .tint(accent)
     }
     private var header: some View {
@@ -51,7 +62,14 @@ struct LiveProView: View {
             }
             Spacer(minLength: 6)
             if model.inRoom {
-                Button { showDevices = true } label: {
+                if model.profile.role == .camera && gps.choice > 0 {
+                    Button { showGPS.toggle() } label: {
+                        Text("GPS").font(.caption.bold()).padding(.horizontal, 10).padding(.vertical, 12)
+                            .background(showGPS ? accent.opacity(0.25) : panel).cornerRadius(11)
+                    }.accessibilityLabel(showGPS ? "Đóng thông tin GPS" : "Mở thông tin GPS")
+                        .accessibilityIdentifier("gpsToggle")
+                }
+                Button { showGPS = false; showDevices = true } label: {
                     HStack(spacing: 6) { Image(systemName: "person.2"); Text("\(model.members.count)") }
                         .font(.subheadline.bold()).padding(12).background(panel).cornerRadius(11)
                 }.accessibilityLabel("Devices: \(model.members.count) thiết bị")
@@ -185,7 +203,6 @@ struct LiveProView: View {
     }
     private var controls: some View {
         VStack(spacing: 12) {
-            if model.profile.role == .camera && gps.choice > 0 { gpsStatusPanel }
             if model.profile.role == .director {
                 Toggle("PTT · Nhấn giữ để nói", isOn: $model.directorPTT)
                     .font(.subheadline).onChange(of: model.directorPTT) { _ in model.modeChanged() }
@@ -212,12 +229,28 @@ struct LiveProView: View {
                 Spacer()
                 AudioRoutePicker().frame(width: 38, height: 32).accessibilityLabel("Chọn tai nghe hoặc thiết bị âm thanh")
             }
+            micWaveform
             HStack { Image(systemName: "speaker.fill"); Slider(value: $model.volume).onChange(of: model.volume) { _ in model.setVolume() }; Image(systemName: "speaker.wave.2.fill") }
                 .font(.caption).foregroundColor(muted)
             Text(model.traffic).font(.system(size: 11, design: .monospaced)).foregroundColor(muted).lineLimit(1).minimumScaleFactor(0.6)
             Button("Rời kênh / Đổi thiết bị") { model.leave() }.font(.subheadline).padding(.vertical, 5)
             Text("Khử vọng thoại · Ưu tiên tai nghe khi máy ở gần nhau.").font(.system(size: 10)).foregroundColor(muted).multilineTextAlignment(.center)
         }.padding(16).background(panel.opacity(0.95)).cornerRadius(18)
+    }
+    private var micWaveform: some View {
+        HStack(spacing: 8) {
+            Image(systemName: model.micLive ? "mic.fill" : "mic.slash.fill").font(.caption)
+            GeometryReader { geometry in
+                HStack(spacing: 2) {
+                    ForEach(0..<36, id: \.self) { index in
+                        let value = model.micLive ? model.micLevels[index] : 0
+                        Capsule().fill(value > 0.9 ? Color.orange : accent)
+                            .frame(width: max(1, (geometry.size.width - 70) / 36), height: max(2, CGFloat(value) * 28))
+                    }
+                }.frame(height: 30).animation(.linear(duration: 0.05), value: model.micLevels)
+            }.frame(height: 30)
+        }.foregroundColor(muted).accessibilityElement(children: .ignore)
+            .accessibilityLabel(model.micLive ? "Mức âm thanh micro đang phát" : "Micro đang tắt")
     }
     private var micFace: some View {
         VStack(spacing: 6) {
@@ -240,7 +273,7 @@ struct LiveProView: View {
                     Spacer(); Text("Thiết bị " + String(format: "%02d", member.number)).font(.caption)
                 }.padding(.vertical, 5)
             }.navigationTitle("Devices · \(model.members.count)/\(model.roomLimit)")
-                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Đóng") { showDevices = false } } }
+                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Đóng") { showDevices = false; showGPS = false } } }
         }.navigationViewStyle(.stack)
     }
     private func eyebrow(_ text: String) -> some View { Text(text).font(.system(size: 10, weight: .bold)).tracking(1.5).foregroundColor(muted) }

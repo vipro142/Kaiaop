@@ -29,6 +29,7 @@ final class IntercomModel: ObservableObject {
     @Published var directorPTT = false
     @Published var micHeld = false
     @Published var micLive = false
+    @Published var micLevels: [Double] = Array(repeating: 0, count: 36)
     @Published var speaker = true
     @Published var speakerMuted = false
     @Published var volume: Double = 0.75
@@ -62,6 +63,11 @@ final class IntercomModel: ObservableObject {
         transport.onMessage = { [weak self] message in self?.message(message) }
         transport.onAudio = { [weak self] data in self?.audio.play(data) }
         transport.onTraffic = { [weak self] tx, rx in self?.traffic = String(format: "↑ Gửi %.1f KB   ·   ↓ Nhận %.1f KB", Double(tx)/1024, Double(rx)/1024) }
+        audio.onLevel = { [weak self] level in
+            guard let self = self else { return }
+            if !self.micLive { self.micLevels = Array(repeating: 0, count: 36); return }
+            self.micLevels.removeFirst(); self.micLevels.append(level)
+        }
         audio.onPCM = { [weak self] data in self?.transport.audio(data) }
         let center = NotificationCenter.default
         listeners.append(center.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] notification in

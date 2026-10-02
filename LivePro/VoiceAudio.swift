@@ -2,6 +2,7 @@ import Foundation
 import AVFoundation
 
 final class VoiceAudio {
+    var onLevel: ((Double) -> Void)?
     var onPCM: ((Data) -> Void)?
     private var engine: AVAudioEngine?
     private var tapInstalled = false
@@ -41,6 +42,7 @@ final class VoiceAudio {
             engine.attach(player); engine.connect(player, to: engine.mainMixerNode, format: playFormat)
             player.volume = volume
             var converterEpoch = -1
+            var lastMeterTime = 0.0
             engine.inputNode.installTap(onBus: 0, bufferSize: 960, format: inputFormat) { [weak self] buffer, _ in
                 guard let self = self else { return }
                 self.lock.lock(); let enabled = self.transmitting, token = self.epoch; self.lock.unlock()
@@ -54,6 +56,19 @@ final class VoiceAudio {
                     supplied = true; state.pointee = .haveData; return buffer
                 }
                 guard status != .error, error == nil, let samples = output.int16ChannelData?[0], output.frameLength > 0 else { return }
+                let meterNow = ProcessInfo.processInfo.systemUptime
+                if meterNow - lastMeterTime >= 0.05 {
+                    lastMeterTime = meterNow
+                    var sum = 0.0
+                    for i in 0..<Int(output.frameLength) { let value = Double(samples[i]) / 32768.0; sum += value * value }
+                    let rms = sqrt(sum / Double(output.frameLength))
+                    let level = max(0, min(1, (20 * log10(max(rms, 0.000001)) + 60) / 60))
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self = self else { return }
+                        self.lock.lock(); let current = self.transmitting && self.epoch == token; self.lock.unlock()
+                        if current { self.onLevel?(level) }
+                    }
+                }
                 let bytes = Data(bytes: samples, count: Int(output.frameLength) * 2)
                 self.lock.lock()
                 guard self.transmitting, self.epoch == token else { self.lock.unlock(); return }
@@ -72,6 +87,7 @@ final class VoiceAudio {
     }
     func setTransmitting(_ enabled: Bool) {
         lock.lock(); epoch += 1; transmitting = enabled; packets.clear(); lock.unlock()
+        if !enabled { onLevel?(0) }
     }
     func play(_ pcm: Data) {
         guard pcm.count == 640, running, let player = player, queuedBuffers < 6,
