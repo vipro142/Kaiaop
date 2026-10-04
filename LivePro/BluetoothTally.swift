@@ -11,6 +11,7 @@ final class BluetoothTally: NSObject, ObservableObject, CBCentralManagerDelegate
     static let ownerUUID = CBUUID(string: "8f7a0005-7c3b-4a84-9c10-4e4154590001")
     static let releaseUUID = CBUUID(string: "8f7a0006-7c3b-4a84-9c10-4e4154590001")
     static let infoUUID = CBUUID(string: "8f7a0007-7c3b-4a84-9c10-4e4154590001")
+    static let brightnessUUID = CBUUID(string: "8f7a0008-7c3b-4a84-9c10-4e4154590001")
     private static let key: [UInt8] = [0xf9,0x7d,0x62,0xb1,0x6e,0x41,0x25,0x8b,0x41,0xfd,0x1f,0xca,0x82,0xe7,0x54,0x23,0x8b,0xbe,0x74,0x88,0x19,0x94,0xc3,0x20,0x7e,0x5c,0x20,0x86,0x77,0x49,0xed,0xb5]
     @Published var selectionNotice: String?
     @Published private(set) var devices: [TallyDevice] = []
@@ -21,6 +22,16 @@ final class BluetoothTally: NSObject, ObservableObject, CBCentralManagerDelegate
     @Published private(set) var connectedName = ""
     @Published private(set) var rememberedName: String
     @Published private(set) var accessoryState: UInt8 = 0
+    @Published private(set) var brightnessAvailable = false
+    @Published private(set) var brightnessSelection = 5
+    @Published private(set) var brightnessStatus = "Đang đọc độ sáng…"
+    private var brightnessKnown = false
+    private var brightnessLevel = 5
+    private var pendingBrightness: UInt8?
+    private var writtenBrightness: UInt8 = 5
+    private var brightnessWaiting = false
+    private var brightnessReadNeeded = false
+    private var brightnessSaveAt: TimeInterval = 0
     private let defaults: UserDefaults
     private let ownerToken: [UInt8]
     private var central: CBCentralManager?
@@ -40,6 +51,7 @@ final class BluetoothTally: NSObject, ObservableObject, CBCentralManagerDelegate
     private var ownerCharacteristic: CBCharacteristic?
     private var releaseCharacteristic: CBCharacteristic?
     private var infoCharacteristic: CBCharacteristic?
+    private var brightnessCharacteristic: CBCharacteristic?
     private var claimMode: UInt8 = 0
     private var releaseRequested = false
     private var releaseReading = false
@@ -47,7 +59,7 @@ final class BluetoothTally: NSObject, ObservableObject, CBCentralManagerDelegate
     private var desiredState: UInt8 = 0
     private var lastServerMessage = -TimeInterval.infinity
     private var pendingState: UInt8?
-    private enum Write { case claim, authentication, release, readInfo, state(UInt8) }
+    private enum Write { case claim, authentication, release, readInfo, state(UInt8), brightness(UInt8), readBrightness }
     private var inFlight: Write?
     private var authenticationStage = 0
     private var operationAt: TimeInterval = 0
@@ -85,6 +97,9 @@ final class BluetoothTally: NSObject, ObservableObject, CBCentralManagerDelegate
         var message = nonce; message.append(mode); message.append(contentsOf: token)
         return Data(HMAC<SHA256>.authenticationCode(for: message, using: SymmetricKey(data: key)).prefix(16))
     }
+    var canAdjustBrightness: Bool { ready && !stopWanted && brightnessAvailable && brightnessKnown }
+    func openSettings() { guard ready && !stopWanted else { return }; if brightnessAvailable { brightnessReadNeeded = true; brightnessStatus = "Đang đọc độ sáng…"; pump() } else { brightnessStatus = "Cần firmware Tally 2.4 để chỉnh độ sáng" } }
+    func setBrightness(_ value: Int) { guard canAdjustBrightness else { return }; let level = min(5,max(1,value)); brightnessSelection = level; pendingBrightness = UInt8(level); brightnessSaveAt = ProcessInfo.processInfo.systemUptime + 0.3; brightnessStatus = "Đang lưu độ sáng…"; DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in self?.pump() } }
     var connectedID: UUID? { ready && !stopWanted ? peripheral?.identifier : nil }
     var canTransferSelection: Bool { selectionCandidate != nil }
     func dismissSelection() { selectionNotice = nil; selectionCandidate = nil }
@@ -121,7 +136,7 @@ final class BluetoothTally: NSObject, ObservableObject, CBCentralManagerDelegate
     // Retain the owner/address until the device confirms durable release.
     func disconnect() { nextDevice = nil; beginStop() }
     private func beginStop() {
-        if stopWanted { return }; stopWanted = true; defaults.set(true, forKey: "bleTallyPendingStop"); stopScan(); retry?.cancel()
+        if stopWanted { return }; pendingBrightness = nil; stopWanted = true; defaults.set(true, forKey: "bleTallyPendingStop"); stopScan(); retry?.cancel()
         guard rememberedID != nil else { completeStop(); return }
         wanted = true; defaults.set(true, forKey: "bleTallyAutoReconnect"); status = "Đang Stop · Chờ ESP32 xóa liên kết…"
         if let p = peripheral { if ready { releaseRequested = true; pump() } else { central?.cancelPeripheralConnection(p) } }
@@ -151,7 +166,7 @@ final class BluetoothTally: NSObject, ObservableObject, CBCentralManagerDelegate
         status = stopWanted ? "Stop đang chờ · Kết nối \(connectedName)" : "Đang kết nối · \(connectedName)"
         if p.state == .connected { p.discoverServices([Self.serviceUUID]) } else { central?.connect(p, options: nil) }
     }
-    private func clearConnection() { ready = false; busy = false; peripheral = nil; stateCharacteristic = nil; authCharacteristic = nil; ownerCharacteristic = nil; releaseCharacteristic = nil; infoCharacteristic = nil; releaseRequested = false; releaseReading = false; inFlight = nil; pendingState = nil; accessoryState = 0; connectedName = ""; authenticationStage = 0 }
+    private func clearConnection() { brightnessCharacteristic = nil; brightnessAvailable = false; brightnessKnown = false; brightnessReadNeeded = false; brightnessWaiting = false; pendingBrightness = nil; brightnessStatus = "Mất kết nối · Chờ kết nối lại Tally"; ready = false; busy = false; peripheral = nil; stateCharacteristic = nil; authCharacteristic = nil; ownerCharacteristic = nil; releaseCharacteristic = nil; infoCharacteristic = nil; releaseRequested = false; releaseReading = false; inFlight = nil; pendingState = nil; accessoryState = 0; connectedName = ""; authenticationStage = 0 }
     private func afterDisconnect() {
         if !stopWanted, let device = nextDevice { let mode = nextMode; nextDevice = nil; select(device, mode: mode); return }
         if stopWanted && awaitingLegacyRelease { beginScan(); return }
@@ -170,6 +185,10 @@ final class BluetoothTally: NSObject, ObservableObject, CBCentralManagerDelegate
     private func pump() {
         guard inFlight == nil, ready, let p = peripheral else { return }
         if stopWanted { if releaseRequested, let release = releaseCharacteristic { releaseRequested = false; inFlight = .release; operationAt = ProcessInfo.processInfo.systemUptime; p.writeValue(Data([1]), for: release, type: .withResponse) }; return }
+        if let characteristic = brightnessCharacteristic {
+            if brightnessReadNeeded { brightnessReadNeeded = false; inFlight = .readBrightness; operationAt = ProcessInfo.processInfo.systemUptime; p.readValue(for: characteristic); return }
+            if !brightnessWaiting, let level = pendingBrightness, ProcessInfo.processInfo.systemUptime >= brightnessSaveAt { pendingBrightness = nil; writtenBrightness = level; brightnessWaiting = true; inFlight = .brightness(level); operationAt = ProcessInfo.processInfo.systemUptime; p.writeValue(Data([level]), for: characteristic, type: .withResponse); return }
+        }
         guard wanted, let value = pendingState, let state = stateCharacteristic else { return }; pendingState = nil; inFlight = .state(value); operationAt = ProcessInfo.processInfo.systemUptime; p.writeValue(Data([value]), for: state, type: .withResponse)
     }
     private func readInfo() { guard stopWanted, let p = peripheral, let info = infoCharacteristic else { return }; inFlight = .readInfo; operationAt = ProcessInfo.processInfo.systemUptime; p.readValue(for: info) }
@@ -199,17 +218,27 @@ final class BluetoothTally: NSObject, ObservableObject, CBCentralManagerDelegate
     func centralManager(_ central: CBCentralManager, didConnect p: CBPeripheral) { guard p === peripheral && wanted else { central.cancelPeripheralConnection(p); return }; p.discoverServices([Self.serviceUUID]) }
     func centralManager(_ central: CBCentralManager, didFailToConnect p: CBPeripheral, error: Error?) { guard p === peripheral else { return }; clearConnection(); status = stopWanted ? "Stop đang chờ · Tìm lại \(rememberedName)" : "Thất bại · Đang nối lại \(rememberedName)"; afterDisconnect() }
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral p: CBPeripheral, error: Error?) { guard p === peripheral else { return }; clearConnection(); status = stopWanted ? "Stop đang chờ · Tìm lại \(rememberedName)" : wanted ? "Standby · Chờ kết nối lại \(rememberedName)" : "Đã dừng · Chưa kết nối"; afterDisconnect() }
-    func peripheral(_ p: CBPeripheral, didDiscoverServices error: Error?) { guard p === peripheral else { return }; guard error == nil, let service = p.services?.first(where: { $0.uuid == Self.serviceUUID }) else { fail("Không có dịch vụ LivePro Tally"); return }; p.discoverCharacteristics([Self.stateUUID,Self.authUUID,Self.ownerUUID,Self.releaseUUID,Self.infoUUID], for: service) }
+    func peripheral(_ p: CBPeripheral, didDiscoverServices error: Error?) { guard p === peripheral else { return }; guard error == nil, let service = p.services?.first(where: { $0.uuid == Self.serviceUUID }) else { fail("Không có dịch vụ LivePro Tally"); return }; p.discoverCharacteristics([Self.stateUUID,Self.authUUID,Self.ownerUUID,Self.releaseUUID,Self.infoUUID,Self.brightnessUUID], for: service) }
     func peripheral(_ p: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
         guard p === peripheral else { return }
         guard error == nil, let state = service.characteristics?.first(where: { $0.uuid == Self.stateUUID }), let auth = service.characteristics?.first(where: { $0.uuid == Self.authUUID }), let owner = service.characteristics?.first(where: { $0.uuid == Self.ownerUUID }), let release = service.characteristics?.first(where: { $0.uuid == Self.releaseUUID }), state.properties.contains(.write), auth.properties.contains(.read), auth.properties.contains(.write) else { fail("Cần firmware LivePro Tally"); return }
-        stateCharacteristic = state; authCharacteristic = auth; ownerCharacteristic = owner; releaseCharacteristic = release; infoCharacteristic = service.characteristics?.first(where: { $0.uuid == Self.infoUUID })
+        stateCharacteristic = state; authCharacteristic = auth; ownerCharacteristic = owner; releaseCharacteristic = release; infoCharacteristic = service.characteristics?.first(where: { $0.uuid == Self.infoUUID }); brightnessCharacteristic = service.characteristics?.first(where: { $0.uuid == Self.brightnessUUID && $0.properties.contains(.read) && $0.properties.contains(.write) }); brightnessAvailable = brightnessCharacteristic != nil
         if claimMode == 2 && infoCharacteristic == nil { forget(); status = "Thất bại · Cần firmware Tally 2.3 để chuyển thiết bị"; return }
         if stopWanted { claimMode = infoCharacteristic == nil ? 0 : 3 }
         authenticationStage = 0; status = stopWanted ? "Đang xác thực Stop · \(connectedName)" : "Đang xác thực · \(connectedName)"; inFlight = .claim; operationAt = ProcessInfo.processInfo.systemUptime; p.writeValue(Data([claimMode] + ownerToken), for: owner, type: .withResponse)
     }
     func peripheral(_ p: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
         guard p === peripheral else { return }
+        if characteristic.uuid == Self.brightnessUUID {
+            guard case .readBrightness? = inFlight else { return }; inFlight = nil
+            guard ready && !stopWanted else { pump(); return }
+            guard error == nil, let data = characteristic.value, data.count == 2 else { brightnessWaiting = false; brightnessKnown = false; pendingBrightness = nil; brightnessStatus = "Thất bại · Không đọc được độ sáng"; return }
+            let b = Array(data); guard (1...5).contains(Int(b[0])), b[1] <= 3 else { brightnessWaiting = false; brightnessKnown = false; pendingBrightness = nil; brightnessStatus = "Thất bại · Dữ liệu độ sáng không hợp lệ"; return }
+            if b[1] == 0 { DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in guard let self = self, p === self.peripheral, self.ready && !self.stopWanted else { return }; self.brightnessReadNeeded = true; self.pump() }; return }
+            brightnessLevel = Int(b[0]); brightnessKnown = b[1] != 3; let accepted = b[1] == 1 && (!brightnessWaiting || b[0] == writtenBrightness); brightnessWaiting = false
+            if pendingBrightness == nil { brightnessSelection = brightnessLevel }
+            brightnessStatus = accepted ? "Đã lưu · Mức \(brightnessLevel) / 5" : b[1] == 3 ? "Thất bại · Tally không cho phép chỉnh độ sáng" : "Thất bại · Chưa lưu được mức sáng"; pump(); return
+        }
         if characteristic.uuid == Self.infoUUID {
             guard stopWanted && releaseReading else { return }; inFlight = nil
             guard error == nil, let data = characteristic.value, data.count == 4, data.first == 2 else { fail("Không đọc được xác nhận ESP32"); return }; let b = Array(data)
@@ -223,20 +252,21 @@ final class BluetoothTally: NSObject, ObservableObject, CBCentralManagerDelegate
             if data == Data([3]) { if stopWanted { completeStop("Đã dừng · Tally đang được thiết bị khác điều khiển") } else { let device = TallyDevice(id: p.identifier, name: rememberedName, rssi: 0, claimed: true); forget(); status = "Tally đã được chọn · Chọn khác hoặc chuyển thiết bị"; showOccupied(device) }; return }
             if authenticationStage == 0 { guard let response = Self.proof(data, token: ownerToken, mode: claimMode) else { fail("Firmware không tương thích"); return }; authenticationStage = 1; inFlight = .authentication; operationAt = ProcessInfo.processInfo.systemUptime; p.writeValue(response, for: characteristic, type: .withResponse) }
             else if authenticationStage == 2 && data == Data([0]) { DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in guard let self = self, p === self.peripheral, self.authenticationStage == 2 else { return }; p.readValue(for: characteristic) } }
-            else if authenticationStage == 2 && data == Data([1]) { ready = true; busy = false; retainConnectedDevice(); if stopWanted { status = "Đang Stop · Chờ xác nhận ESP32…"; releaseRequested = true } else { status = "Thành công · Đã kết nối \(connectedName)"; if let state = stateCharacteristic { p.setNotifyValue(true, for: state); p.readValue(for: state) } }; pendingState = desiredState; pump() }
+            else if authenticationStage == 2 && data == Data([1]) { ready = true; busy = false; brightnessReadNeeded = brightnessAvailable && !stopWanted; brightnessKnown = false; retainConnectedDevice(); if stopWanted { status = "Đang Stop · Chờ xác nhận ESP32…"; releaseRequested = true } else { status = "Thành công · Đã kết nối \(connectedName)"; if let state = stateCharacteristic { p.setNotifyValue(true, for: state); p.readValue(for: state) } }; pendingState = desiredState; pump() }
             else { fail("Tally từ chối xác thực") }
         } else if characteristic.uuid == Self.stateUUID, error == nil, let data = characteristic.value, data.count == 1, let value = data.first, value <= 2 { accessoryState = value }
     }
     func peripheral(_ p: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
         guard p === peripheral, let operation = inFlight else { return }
-        switch operation { case .claim: guard characteristic.uuid == Self.ownerUUID else { return }; case .authentication: guard characteristic.uuid == Self.authUUID else { return }; case .release: guard characteristic.uuid == Self.releaseUUID else { return }; case .state: guard characteristic.uuid == Self.stateUUID else { return }; case .readInfo: return }
+        switch operation { case .claim: guard characteristic.uuid == Self.ownerUUID else { return }; case .authentication: guard characteristic.uuid == Self.authUUID else { return }; case .release: guard characteristic.uuid == Self.releaseUUID else { return }; case .state: guard characteristic.uuid == Self.stateUUID else { return }; case .brightness: guard characteristic.uuid == Self.brightnessUUID else { return }; case .readBrightness, .readInfo: return }
         inFlight = nil; guard error == nil else { fail("Gửi dữ liệu lỗi"); return }
         switch operation {
         case .claim: if let auth = authCharacteristic { p.readValue(for: auth) }
         case .authentication: authenticationStage = 2; p.readValue(for: characteristic)
         case .release: if infoCharacteristic != nil { releaseReading = true; readInfo() } else { awaitingLegacyRelease = true; central?.cancelPeripheralConnection(p) }
         case .state(let value): accessoryState = value; pump()
-        case .readInfo: break
+        case .brightness: brightnessReadNeeded = true; pump()
+        case .readBrightness, .readInfo: break
         }
     }
 }
