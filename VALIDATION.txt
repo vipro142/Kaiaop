@@ -1,1 +1,1 @@
-Swift syntax parser PASS; plist GPS/audio permissions PASS. Xcode build/type-check and device tests NOT RUN. See README-GPS-3.5.md.
+LIVEPRO iOS 3.7.0 (48): Windows source validation only. See README-BLE-3.7.md and the delivery validation-report.json for exact checks. Xcode type-check/build, XCTest, Simulator, iPhone and physical BLE tests NOT RUN. This source package is not an IPA.

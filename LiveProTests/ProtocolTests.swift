@@ -2,6 +2,21 @@ import XCTest
 import Foundation
 
 final class ProtocolTests: XCTestCase {
+    func testTallyBLEContractAndNetworkFailSafe() {
+        XCTAssertEqual(TallyBLEProtocol.serviceUUID, "8f7a0001-7c3b-4a84-9c10-4e4154590001")
+        XCTAssertEqual(TallyBLEProtocol.stateUUID, "8f7a0002-7c3b-4a84-9c10-4e4154590001")
+        XCTAssertEqual(TallyBLEProtocol.configurationUUID, "8f7a0003-7c3b-4a84-9c10-4e4154590001")
+        XCTAssertEqual(TallyBLEProtocol.stateByte("program", sessionHealthy: true), 1)
+        XCTAssertEqual(TallyBLEProtocol.stateByte("preview", sessionHealthy: true), 2)
+        XCTAssertEqual(TallyBLEProtocol.stateByte("off", sessionHealthy: true), 0)
+        XCTAssertEqual(TallyBLEProtocol.stateByte("invalid", sessionHealthy: true), 0)
+        XCTAssertEqual(TallyBLEProtocol.stateByte("program", sessionHealthy: false), 0)
+        // A long-running unchanged tally survives fresh server pong messages.
+        XCTAssertEqual(TallyBLEProtocol.liveState(1, serverAge: 1.9), 1)
+        XCTAssertEqual(TallyBLEProtocol.liveState(2, serverAge: 4), 2)
+        XCTAssertEqual(TallyBLEProtocol.liveState(1, serverAge: 4.01), 0)
+        XCTAssertEqual(TallyBLEProtocol.liveState(1, serverAge: -1), 0)
+    }
     func testSplitAndMultipleJSONMessages() throws {
         var parser = JSONLines()
         XCTAssertTrue(try parser.append(Data("{\"type\":\"po".utf8)).isEmpty)

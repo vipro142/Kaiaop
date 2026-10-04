@@ -22,12 +22,13 @@ final class IntercomModel: ObservableObject {
     private var closedWarningKey = ""
     @Published var canJoin = false
     @Published var joining = false
-    @Published var inRoom = false
-    @Published var connected = false
+    @Published var inRoom = false { didSet { syncBluetoothTally() } }
+    @Published var connected = false { didSet { syncBluetoothTally() } }
     @Published var connectionText = "Chưa tham gia"
     @Published var members: [Member] = []
     @Published var talkers: [Member] = []
-    @Published var tally = "off"
+    @Published var tally = "off" { didSet { syncBluetoothTally() } }
+    let bluetoothTally = BluetoothTally()
     @Published var directorPTT = false
     @Published var micHeld = false
     @Published var echoCancellation = true
@@ -73,6 +74,7 @@ final class IntercomModel: ObservableObject {
         transport.selectServer(selectedServer)
         audio.echoCancellation = echoCancellation
         transport.onConnection = { [weak self] state in self?.connection(state) }
+        transport.onServerActivity = { [weak self] in self?.bluetoothTally.serverMessageReceived() }
         transport.onMessage = { [weak self] message in self?.message(message) }
         transport.onAudio = { [weak self] data in self?.audio.play(data) }
         transport.onTraffic = { [weak self] tx, rx in self?.traffic = String(format: "↑ Gửi %.1f KB   ·   ↓ Nhận %.1f KB", Double(tx)/1024, Double(rx)/1024) }
@@ -318,9 +320,11 @@ final class IntercomModel: ObservableObject {
     }
     func activeChanged(_ active: Bool) {
         appActive = active
+        syncBluetoothTally(); bluetoothTally.sceneChanged(active: active)
         if BackgroundMicPolicy.shouldRelease(active: active, latched: latched) { stopMic() }
         if active { if inRoom && !audio.running && !audioFailed { restartAudio() } else { refreshAvailability() } }
     }
+    private func syncBluetoothTally() { bluetoothTally.update(tally: tally, sessionHealthy: connected && inRoom) }
     func showNotice(_ text: String, seconds: Double = 4) {
         noticeVersion += 1; let token = noticeVersion; notice = text
         DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in

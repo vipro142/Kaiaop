@@ -11,6 +11,7 @@ struct LiveProView: View {
     @ObservedObject var model: IntercomModel
     @State private var showDevices = false
     @State private var showGPS = false
+    @State private var showBluetoothTally = false
     @StateObject private var gps = GPSTracker()
     @Environment(\.horizontalSizeClass) private var sizeClass
     private var background: Color {
@@ -45,6 +46,7 @@ struct LiveProView: View {
             }
         }
         .sheet(isPresented: $showDevices) { devicesSheet }
+        .sheet(isPresented: $showBluetoothTally) { BluetoothTallyView(tally: model.bluetoothTally) }
         .onChange(of: model.inRoom) { joined in if !joined { showDevices = false; showGPS = false } }
         .onAppear { gps.configure(camera: model.profile.role == .camera) }
         .onChange(of: gps.choice) { _ in showGPS = false; gps.configure(camera: model.profile.role == .camera) }
@@ -61,6 +63,9 @@ struct LiveProView: View {
                     .lineLimit(1).minimumScaleFactor(0.7)
             }
             Spacer(minLength: 6)
+            Button { showBluetoothTally = true } label: {
+                Text("Tally").font(.caption.bold()).padding(8).background(panel).cornerRadius(9)
+            }.accessibilityLabel("Tally Bluetooth").accessibilityIdentifier("bleTallySettings")
             Menu {
                 ForEach(IntercomServer.allCases) { server in
                     Button(server.title + (model.selectedServer == server ? " ✓" : "")) { model.selectServer(server) }

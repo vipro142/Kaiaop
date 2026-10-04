@@ -8,6 +8,7 @@ final class IntercomTransport {
     var onConnection: ((String) -> Void)?
     var onAudio: ((Data) -> Void)?
     var onTraffic: ((Int, Int) -> Void)?
+    var onServerActivity: (() -> Void)?
     private var host: NWEndpoint.Host = "116.118.45.184"
     private let clientID: String
     private var tcp: NWConnection?
@@ -87,6 +88,7 @@ final class IntercomTransport {
                     if Date().timeIntervalSince(self.lastReply) > 15 { self.disconnect(token); return }
                     self.command("ping"); self.registerUDP(); self.onTraffic?(self.tx, self.rx)
                 }
+                if let heartbeat = self.heartbeat { RunLoop.main.add(heartbeat, forMode: .common) }
             case .failed: self.disconnect(token)
             default: break
             }
@@ -105,7 +107,10 @@ final class IntercomTransport {
             do {
                 if let data = data {
                     self.lastReply = Date()
-                    for message in try self.lines.append(data) { self.handle(message, token: token) }
+                    for message in try self.lines.append(data) {
+                        if message["type"] is String { self.onServerActivity?() }
+                        self.handle(message, token: token)
+                    }
                 }
             } catch { self.disconnect(token); return }
             guard token == self.generation else { return }

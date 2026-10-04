@@ -1,5 +1,19 @@
 import Foundation
 
+enum TallyBLEProtocol {
+    static let serviceUUID = "8f7a0001-7c3b-4a84-9c10-4e4154590001"
+    static let stateUUID = "8f7a0002-7c3b-4a84-9c10-4e4154590001"
+    static let configurationUUID = "8f7a0003-7c3b-4a84-9c10-4e4154590001"
+    static func stateByte(_ tally: String, sessionHealthy: Bool) -> UInt8 {
+        guard sessionHealthy else { return 0 }
+        switch tally { case "program": return 1; case "preview": return 2; default: return 0 }
+    }
+    // Server ping/pong keeps an unchanged PROGRAM/PREVIEW alive.
+    static func liveState(_ requested: UInt8, serverAge: TimeInterval) -> UInt8 {
+        serverAge >= 0 && serverAge <= 4 && requested <= 2 ? requested : 0
+    }
+}
+
 enum CrewRole: String, CaseIterable, Codable, Identifiable {
     case director = "DIRECTOR", camera = "CAMERA", tech = "TECH"
     case admin = "ADMIN"
@@ -35,7 +49,7 @@ struct JoinProfile: Codable, Equatable {
     }
     static let rooms = (65...74).map { "EVENT_" + String(UnicodeScalar($0)!) }
     func registration(clientID: String, password: String = "") -> [String: Any] {
-        ["type": "register", "roomPassword": password, "protocolVersion": 4, "appVersion": "3.6.0", "clientType": "ios", "clientId": clientID,
+        ["type": "register", "roomPassword": password, "protocolVersion": 4, "appVersion": "3.7.0", "clientType": "ios", "clientId": clientID,
          "deviceId": deviceID, "room": room, "role": role.rawValue,
          "number": number, "cameraNumber": role == .camera ? cameraNumber : 0,
          "name": name.trimmingCharacters(in: .whitespacesAndNewlines)]
